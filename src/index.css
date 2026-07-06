@@ -1,0 +1,185 @@
+:root {
+  /* Color System */
+  --bg-base: hsl(224, 25%, 6%);
+  --bg-surface: hsl(224, 20%, 10%);
+  --bg-surface-elevated: hsl(224, 20%, 14%);
+  
+  --border-muted: hsl(224, 15%, 16%);
+  --border-accent: hsl(224, 15%, 22%);
+
+  /* Austrian Theme Colors */
+  --color-red: hsl(355, 90%, 55%);
+  --color-red-glow: hsla(355, 90%, 55%, 0.35);
+  
+  --color-white: hsl(0, 0%, 95%);
+  --color-white-glow: hsla(0, 0%, 95%, 0.35);
+
+  --color-gold: hsl(45, 90%, 50%);
+  --color-gold-glow: hsla(45, 90%, 50%, 0.35);
+
+  --color-cyan: hsl(190, 90%, 50%);
+  --color-cyan-glow: hsla(190, 90%, 50%, 0.3);
+
+  /* Typography Colors */
+  --text-primary: hsl(0, 0%, 96%);
+  --text-secondary: hsl(218, 12%, 65%);
+  --text-muted: hsl(218, 10%, 45%);
+
+  /* Transitions */
+  --transition-fast: 0.15s ease;
+  --transition-normal: 0.25s ease;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-accent) transparent;
+}
+
+body {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+/* Glassmorphism & Cards */
+.card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-muted);
+  border-radius: 12px;
+  padding: 20px;
+  transition: all var(--transition-normal);
+}
+
+.card:hover {
+  border-color: var(--border-accent);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+}
+
+/* Neon Badges & Highlights */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  font-family: 'Outfit', sans-serif;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.badge-red {
+  background-color: hsla(355, 90%, 55%, 0.1);
+  border: 1px solid var(--color-red);
+  color: var(--color-red);
+  text-shadow: 0 0 8px var(--color-red-glow);
+}
+
+.badge-gold {
+  background-color: hsla(45, 90%, 50%, 0.1);
+  border: 1px solid var(--color-gold);
+  color: var(--color-gold);
+  text-shadow: 0 0 8px var(--color-gold-glow);
+}
+
+.badge-green {
+  background-color: hsla(140, 75%, 45%, 0.1);
+  border: 1px solid hsl(140, 75%, 45%);
+  color: hsl(140, 75%, 50%);
+}
+
+.badge-cyan {
+  background-color: hsla(190, 90%, 50%, 0.1);
+  border: 1px solid var(--color-cyan);
+  color: var(--color-cyan);
+}
+
+/* Custom Inputs and Buttons */
+input, select, textarea {
+  background-color: var(--bg-surface-elevated);
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.9rem;
+  padding: 10px 14px;
+  transition: all var(--transition-fast);
+}
+
+input:focus, select:focus, textarea:focus {
+  border-color: var(--color-red);
+  box-shadow: 0 0 10px var(--color-red-glow);
+  outline: none;
+}
+
+button {
+  background-color: var(--color-red);
+  border: none;
+  border-radius: 8px;
+  color: white;
+  cursor: pointer;
+  font-family: 'Outfit', sans-serif;
+  font-size: 0.95rem;
+  font-weight: 600;
+  padding: 10px 20px;
+  transition: all var(--transition-fast);
+}
+
+button:hover {
+  filter: brightness(1.1);
+  box-shadow: 0 0 15px var(--color-red-glow);
+}
+
+button:active {
+  transform: scale(0.98);
+}
+
+button.secondary {
+  background-color: var(--bg-surface-elevated);
+  border: 1px solid var(--border-accent);
+  color: var(--text-primary);
+}
+
+button.secondary:hover {
+  background-color: var(--border-accent);
+  box-shadow: none;
+}
+
+/* Timeline Custom Styles */
+.timeline-track {
+  background-color: var(--bg-surface-elevated);
+  border-radius: 8px;
+  height: 50px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-base);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-accent);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}

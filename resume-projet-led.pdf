@@ -1,0 +1,335 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+2 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>
+endobj
+3 0 obj
+<< /Length 4609 >>
+stream
+BT /F2 18 Tf 1 0 0 1 54.00 777.89 Tm (Resume du projet LED - Ingenierie son et lumiere) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 733.89 Tm (Date de synthese : 6 juillet 2026) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 720.39 Tm (Perimetre : pages HTML sous https://learn.glassworks.tech/led/ ; les images, fichiers Excel et) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 706.89 Tm (depots externes sont references mais non recopies.) Tj ET
+BT /F2 13 Tf 1 0 0 1 54.00 683.39 Tm (1. Mission du projet) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 655.39 Tm (Le projet consiste a developper une ou plusieurs applications logicielles pour creer,) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 641.89 Tm (configurer, router et jouer un spectacle son et lumiere synchronise avec une musique. Le) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 628.39 Tm (systeme doit piloter des milliers de LED adressables individuellement et des appareils DMX,) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 614.89 Tm (tout en restant configurable pour d'autres installations physiques.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 591.39 Tm (Le contexte vient du Groupe LAPS, studio specialise dans les installations artistiques de) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 577.89 Tm (lumiere et de son. Leur approche separe la creation artistique du routage materiel : l'outil) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 564.39 Tm (de creation produit un etat logique de l'installation, puis un module de routage traduit cet) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 550.89 Tm (etat vers les controleurs, univers DMX, canaux et appareils physiques.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 527.39 Tm (Ce qu'il faut retenir : le livrable n'est pas seulement une animation. Il faut construire un) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 513.89 Tm (outil ou une suite d'outils capable de produire une demonstration spectaculaire, mais aussi de) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 500.39 Tm (prouver que l'architecture est flexible, performante, configurable et debuggable.) Tj ET
+BT /F2 13 Tf 1 0 0 1 54.00 476.89 Tm (2. Architecture generale attendue) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 448.89 Tm (Pipeline conceptuel :) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 425.39 Tm (1. Outil de creation artistique : cree les animations et determine les couleurs / valeurs) Tj ET
+BT /F1 10 Tf 1 0 0 1 74.00 411.89 Tm (d'entites logiques.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 398.39 Tm (2. Etat logique : liste d'entites, chacune avec une couleur ou une valeur RGBW a un instant) Tj ET
+BT /F1 10 Tf 1 0 0 1 74.00 384.89 Tm (donne.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 371.39 Tm (3. Module de routage : transforme cet etat en donnees DMX, puis en paquets reseau ArtNet ou) Tj ET
+BT /F1 10 Tf 1 0 0 1 74.00 357.89 Tm (en autres protocoles.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 344.39 Tm (4. Controleurs physiques : par exemple BC216, qui recoivent ArtNet en UDP et pilotent les) Tj ET
+BT /F1 10 Tf 1 0 0 1 74.00 330.89 Tm (bandes LED ou appareils DMX.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 317.39 Tm (5. Installation reelle : mur LED, projecteurs statiques, lyres et autres appareils.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 293.89 Tm (Dans une installation reelle, au moins un PC sur place execute le simulateur / outil de) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 280.39 Tm (creation et l'application de routage. Les grosses installations peuvent utiliser plusieurs PC) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 266.89 Tm (qui communiquent sur le reseau.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 243.39 Tm (Decision d'architecture majeure : l'outil de creation ne doit pas connaitre les adresses IP,) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 229.89 Tm (les sorties physiques ou les univers DMX. Il ne manipule que des entites. Le routeur, lui, ne) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 216.39 Tm (doit pas connaitre la maniere dont l'animation a ete creee ; il recoit un state et l'achemine.) Tj ET
+BT /F2 13 Tf 1 0 0 1 54.00 192.89 Tm (3. Materiel, DMX et ArtNet) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 164.89 Tm (Le controleur BC216 recoit des messages ArtNet via Ethernet/UDP et produit des signaux vers) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 151.39 Tm (des bandes LED pixel. Chaque BC216 dispose de 16 sorties physiques. Chaque sortie peut) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 137.89 Tm (adresser jusqu'a 1024 canaux.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 114.39 Tm (Notions cles :) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 90.89 Tm (- Un canal DMX contient une valeur entre 0 et 255.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 77.39 Tm (- Une LED RGB consomme 3 canaux : rouge, vert, bleu.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 63.89 Tm (- Une LED RGBW consomme 4 canaux : rouge, vert, bleu, blanc.) Tj ET
+BT /F1 8 Tf 1 0 0 1 54.00 32.00 Tm (Resume projet LED - page 1/6) Tj ET
+endstream
+endobj
+4 0 obj
+<< /Length 5067 >>
+stream
+BT /F1 10 Tf 1 0 0 1 66.00 777.89 Tm (- Un univers DMX512 contient 512 canaux, soit 170 LED RGB exploitables par univers \(170) Tj ET
+BT /F1 10 Tf 1 0 0 1 74.00 764.39 Tm (x 3 = 510\).) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 750.89 Tm (- Une sortie BC216 utilisant 1024 canaux correspond donc a 2 univers DMX.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 737.39 Tm (- ArtNet encapsule les donnees DMX512 dans des messages UDP envoyes sur le reseau IP.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 713.89 Tm (Exemple mental important : pour adresser une LED precise, il faut connaitre le controleur) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 700.39 Tm (cible, sa sortie, l'univers DMX correspondant, puis le canal dans le payload DMX. Ce calcul) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 686.89 Tm (devient vite complexe, d'ou la necessite d'un module de routage configurable.) Tj ET
+BT /F2 13 Tf 1 0 0 1 54.00 663.39 Tm (4. Creation artistique, Unity, Tan et eHub) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 635.39 Tm (Le cours presente Tan, une extension Unity employee par le Groupe LAPS. Unity est utile parce) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 621.89 Tm (qu'il permet d'importer des modeles 3D, de naviguer dans une scene, d'etendre l'editeur, de) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 608.39 Tm (produire du C#/.NET reseau et de creer des experiences interactives. La version indiquee pour) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 594.89 Tm (le projet est Unity 6000.4, et le simulateur de test indique Unity 6000.4.8.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 571.39 Tm (Concept d'abstraction : une entite, aussi appelee pixel, represente une source lumineuse RGB) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 557.89 Tm (unique. Chaque entite possede un identifiant numerique unique et un etat RGB interne, noir par) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 544.39 Tm (defaut.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 520.89 Tm (Tan peut modifier l'etat des entites via des clips de timeline, des illuminateurs Unity, des) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 507.39 Tm (projecteurs ou d'autres outils. L'etat global peut se representer comme une liste d'entites et) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 493.89 Tm (de couleurs, par exemple : entite 5 en rouge, entite 6 en jaune, etc.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 470.39 Tm (Protocole eHub :) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 446.89 Tm (- eHub est un protocole UDP personnalise qui transmet l'etat de l'installation.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 433.39 Tm (- Message update : envoye a haute frequence, environ 40 fois par seconde. Il contient) Tj ET
+BT /F1 10 Tf 1 0 0 1 74.00 419.89 Tm (les donnees RGBW brutes de toutes les LED, compressees avec GZip. Le payload non) Tj ET
+BT /F1 10 Tf 1 0 0 1 74.00 406.39 Tm (compresse contient des sextuors : id d'entite sur 2 octets, puis R, G, B, W sur 1) Tj ET
+BT /F1 10 Tf 1 0 0 1 74.00 392.89 Tm (octet chacun.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 379.39 Tm (- Message config : envoye moins souvent, environ une fois par seconde. Il decrit comment) Tj ET
+BT /F1 10 Tf 1 0 0 1 74.00 365.89 Tm (les plages d'entites sont rangees dans les messages update. Cela economise de la bande) Tj ET
+BT /F1 10 Tf 1 0 0 1 74.00 352.39 Tm (passante quand les identifiants d'entites ne sont pas strictement contigus.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 338.89 Tm (- Pour les grandes installations, plusieurs messages UDP peuvent etre necessaires a) Tj ET
+BT /F1 10 Tf 1 0 0 1 74.00 325.39 Tm (cause de la taille maximale d'un paquet UDP.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 301.89 Tm (L'interoperabilite avec eHub est optionnelle mais valorisee : recevoir des messages eHub et) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 288.39 Tm (les router correctement rapporte des points bonus.) Tj ET
+BT /F2 13 Tf 1 0 0 1 54.00 264.89 Tm (5. Routage attendu) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 236.89 Tm (Le routeur doit faire le lien entre l'etat logique issu de l'outil de creation et les) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 223.39 Tm (controleurs physiques. Sa fonction principale est d'assigner les entites a un controleur, une) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 209.89 Tm (sortie, un univers et une LED ou un canal DMX.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 186.39 Tm (Le cours presente Emitter Hub comme reference conceptuelle. Son flux type :) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 162.89 Tm (1. Unity to Emitters : ecoute les messages UDP eHub config/update et produit un tableau) Tj ET
+BT /F1 10 Tf 1 0 0 1 74.00 149.39 Tm (d'entites avec leurs couleurs.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 135.89 Tm (2. Emitter Group : selectionne une plage d'entites a router.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 122.39 Tm (3. Emitter Group to DMX : convertit les couleurs d'entites en canaux DMX, avec offset et) Tj ET
+BT /F1 10 Tf 1 0 0 1 74.00 108.89 Tm (selection de composantes RGBW.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 95.39 Tm (4. DMX to ArtNet : encapsule le DMX dans des paquets ArtNet avec IP cible et univers cible.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 71.89 Tm (Le routage doit etre performant : memoire limitee, peu de CPU, nombre minimal de paquets) Tj ET
+BT /F1 8 Tf 1 0 0 1 54.00 32.00 Tm (Resume projet LED - page 2/6) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Length 4173 >>
+stream
+BT /F1 10 Tf 1 0 0 1 54.00 777.89 Tm (ArtNet, adaptation a de grandes installations, et idealement execution sur un thread separe de) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 764.39 Tm (l'interface utilisateur.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 740.89 Tm (Les criteres visibles de succes sont la synchronisation parfaite avec la musique, l'absence de) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 727.39 Tm (latence, de tearing, d'artefacts, de pixels manquants, de couleurs incorrectes et de mauvais) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 713.89 Tm (mapping.) Tj ET
+BT /F2 13 Tf 1 0 0 1 54.00 690.39 Tm (6. Cas de test : mur LED) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 662.39 Tm (Le mur fourni par le Groupe LAPS est un cadre de 2 m x 2 m avec 128 x 128 LED visibles, soit) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 648.89 Tm (16 384 LED visibles. En realite, il contient davantage de LED car certaines sont cachees et) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 635.39 Tm (servent a la fixation.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 611.89 Tm (Structure physique :) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 588.39 Tm (- 64 bandes LED.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 574.89 Tm (- Chaque bande contient 259 LED.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 561.39 Tm (- Dans chaque colonne : une LED cachee a la base, 128 LED visibles vers le haut, une LED) Tj ET
+BT /F1 10 Tf 1 0 0 1 74.00 547.89 Tm (cachee en haut, 128 LED visibles vers le bas, puis une LED cachee a la base.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 534.39 Tm (- Chaque bande depasse 170 LED, donc elle utilise 2 univers DMX.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 520.89 Tm (- L'ensemble du mur utilise 128 univers.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 507.39 Tm (- Attention : dans ArtNet, les univers commencent a 0.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 483.89 Tm (Mapping principal indique :) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 460.39 Tm (- Entites 100-4858 : univers 0 a 31, controleur 192.168.1.45.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 446.89 Tm (- Entites 5100-9858 : univers 32 a 63, controleur 192.168.1.46.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 433.39 Tm (- Entites 10100-14858 : univers 64 a 95, controleur 192.168.1.47.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 419.89 Tm (- Entites 15100-19858 : univers 96 a 127, controleur 192.168.1.48.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 396.39 Tm (Reseau de l'installation : SSID GLASS_RESEAUX, mot de passe networks.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 372.89 Tm (Le tableau complet de mapping est fourni dans un fichier Excel externe reference par le cours.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 359.39 Tm (Un projet Unity de simulation est aussi reference sur le GitLab Glassworks.) Tj ET
+BT /F2 13 Tf 1 0 0 1 54.00 335.89 Tm (7. Autres appareils DMX) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 307.89 Tm (Le spectacle comprend aussi des appareils DMX en plus du mur LED.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 284.39 Tm (Projecteur statique :) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 260.89 Tm (- Connecte au quatrieme controleur : 192.168.1.48.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 247.39 Tm (- Univers 33.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 233.89 Tm (- Canaux 1 a 4 : rouge, vert, bleu, blanc.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 210.39 Tm (Projecteurs dynamiques / lyres :) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 186.89 Tm (- 4 appareils connectes au controleur 192.168.1.48.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 173.39 Tm (- Univers 33.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 159.89 Tm (- Chaque lyre utilise 13 canaux pour couleur, rotation et effets.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 146.39 Tm (- Plages : projecteur 1 canaux 10-22, projecteur 2 canaux 30-42, projecteur 3 canaux) Tj ET
+BT /F1 10 Tf 1 0 0 1 74.00 132.89 Tm (50-62, projecteur 4 canaux 70-82.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 119.39 Tm (- Les appareils DMX peuvent etre branches en serie, ce qui permet de partager le meme) Tj ET
+BT /F1 10 Tf 1 0 0 1 74.00 105.89 Tm (univers.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 82.39 Tm (Implication pour notre logiciel : il ne suffit pas de gerer un ecran 2D. Le systeme doit) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 68.89 Tm (pouvoir piloter aussi des appareils multi-canaux dont les controles ne sont pas seulement RGB.) Tj ET
+BT /F1 8 Tf 1 0 0 1 54.00 32.00 Tm (Resume projet LED - page 3/6) Tj ET
+endstream
+endobj
+6 0 obj
+<< /Length 4691 >>
+stream
+BT /F2 13 Tf 1 0 0 1 54.00 767.89 Tm (8. Contraintes de projet) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 739.89 Tm (Organisation : groupes de 4 personnes maximum.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 716.39 Tm (Langage : libre. Unity peut etre utilise comme outil de demo et comme emetteur eHub, mais il) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 702.89 Tm (n'est pas obligatoire.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 679.39 Tm (Restrictions : les solutions d'eclairage tierces open source ou professionnelles ne sont pas) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 665.89 Tm (acceptees. Le logiciel de creation doit etre developpe par l'equipe. L'IA peut aider comme) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 652.39 Tm (reference, mais le travail doit rester maitrise par l'equipe.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 628.89 Tm (Planning :) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 605.39 Tm (- 6 juillet 2026 : kickoff.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 591.89 Tm (- 7 et 9 juillet : cours en debut de seance puis travail.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 578.39 Tm (- 8, 21 et 22 juillet : TP.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 564.89 Tm (- 10 et 20 juillet : points de progres, evaluation continue.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 551.39 Tm (- 13-17 juillet : semaine entreprise, acces libre possible a l'installation.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 537.89 Tm (- 23 juillet : repetition generale et evaluation interne/officielle.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 524.39 Tm (- 24 juillet : spectacle general l'apres-midi.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 500.89 Tm (Livrables :) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 477.39 Tm (- Lien vers le depot Git.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 463.89 Tm (- Artefact reproductible : executable et fichiers de configuration permettant de rejouer) Tj ET
+BT /F1 10 Tf 1 0 0 1 74.00 450.39 Tm (le spectacle, idealement compile pour Win64 et macOS Apple Silicon.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 436.89 Tm (- Photos et videos de la production.) Tj ET
+BT /F2 13 Tf 1 0 0 1 54.00 413.39 Tm (9. Exigences et notation) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 385.39 Tm (P1 - Configuration : permettre de configurer l'installation physique. Cela inclut controleurs,) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 371.89 Tm (adresses IP, univers, bandes LED, nombre de LED, appareils supplementaires, sauvegarde et) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 358.39 Tm (rechargement de configurations. Evaluation : exhaustivite 7, fonctionnement 7,) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 344.89 Tm (sauvegarde/chargement 2.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 321.39 Tm (P2 - Routage : router un state vers les controleurs, univers et canaux appropries. Il faut) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 307.89 Tm (allumer au moins une LED via ArtNet/DMX, couvrir le mapping complet, etre performant et) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 294.39 Tm (piloter les spots lyre. Evaluation : LED via ArtNet/DMX 5, exhaustivite 25, performance 5,) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 280.89 Tm (lyres 7.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 257.39 Tm (P3 - Outil de creation de spectacle : fournir un outil permettant de creer un spectacle) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 243.89 Tm (lumineux synchronise sur musique. Il peut utiliser images, video, keyframes, motion design ou) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 230.39 Tm (autres techniques, mais doit aussi permettre de piloter les appareils non 2D et de) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 216.89 Tm (creer/debugger rapidement des animations sans logiciel tiers. Evaluation : facilite) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 203.39 Tm (d'utilisation et outils 10, UI/ergonomie 6, performance 5, sauvegarde/chargement 4.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 179.89 Tm (P4 - Architecture flexible : separer creation et routage, rendre le code explicable et la) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 166.39 Tm (solution adaptable a plusieurs configurations. Evaluation : explication de l'architecture 5,) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 152.89 Tm (demonstration de configurations differentes 2.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 129.39 Tm (P5 - Preuve / demo : presenter un spectacle synchronise, impressionnant et divertissant,) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 115.89 Tm (montrant les meilleures fonctionnalites. Il doit montrer le controle de plusieurs appareils,) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 102.39 Tm (un gros volume de donnees, une frequence d'images elevee et l'absence d'artefacts. Evaluation) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 88.89 Tm (: exhaustivite 6, creativite 6, demo d'au moins 30 secondes 2.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 65.39 Tm (P6 - Interactivite, optionnel : ajouter une interaction en temps reel via clavier, manette,) Tj ET
+BT /F1 8 Tf 1 0 0 1 54.00 32.00 Tm (Resume projet LED - page 4/6) Tj ET
+endstream
+endobj
+7 0 obj
+<< /Length 4805 >>
+stream
+BT /F1 10 Tf 1 0 0 1 54.00 777.89 Tm (camera ou autre, integree a la demo. Bonus : jusqu'a +10.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 754.39 Tm (P7 - Interoperabilite, optionnel : recevoir eHub depuis le simulateur Unity et router) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 740.89 Tm (correctement vers l'installation physique avec des performances acceptables. Bonus : jusqu'a) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 727.39 Tm (+10.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 703.89 Tm (P8 - Debogage : fournir des fakers, generateurs de signaux, moniteurs et visualisations pour) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 690.39 Tm (trouver les problemes au niveau configuration physique, routage ou creation. Exemple : grille) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 676.89 Tm (2D d'un univers DMX en temps reel avant encapsulation ArtNet, ou ecoute/visualisation des) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 663.39 Tm (paquets ArtNet recus. Bonus : jusqu'a +10, avec demonstration requise.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 639.89 Tm (Les modules optionnels ne rapportent des points que si les modules obligatoires sont reussis.) Tj ET
+BT /F2 13 Tf 1 0 0 1 54.00 616.39 Tm (10. Ce qu'il faut construire concretement) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 588.39 Tm (Minimum viable mais credible :) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 564.89 Tm (1. Un modele de configuration de l'installation : controleurs, IP, univers, sorties, bandes) Tj ET
+BT /F1 10 Tf 1 0 0 1 74.00 551.39 Tm (LED, entites, appareils DMX, plages de canaux.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 537.89 Tm (2. Une sauvegarde et un chargement de configuration, dans un format stable et versionnable.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 524.39 Tm (3. Un moteur d'etat : representation des entites LED et des appareils, avec valeurs RGBW ou) Tj ET
+BT /F1 10 Tf 1 0 0 1 74.00 510.89 Tm (canaux DMX.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 497.39 Tm (4. Un module de mapping : convertir entite/appareil logique en univers et canaux DMX.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 483.89 Tm (5. Un emetteur ArtNet/DMX UDP performant.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 470.39 Tm (6. Un outil de creation : timeline, keyframes, patterns, import d'images/video ou autre) Tj ET
+BT /F1 10 Tf 1 0 0 1 74.00 456.89 Tm (approche, mais avec outils internes simples pour creer et tester rapidement.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 443.39 Tm (7. Un player synchronise sur musique.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 429.89 Tm (8. Un support explicite du mur LED complet et des appareils DMX de l'univers 33.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 416.39 Tm (9. Des outils de debug : simulateur/faker, moniteurs de state, DMX, ArtNet, mapping et) Tj ET
+BT /F1 10 Tf 1 0 0 1 74.00 402.89 Tm (performance.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 389.39 Tm (10. Un packaging reproductible avec configuration et demo.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 365.89 Tm (Pour viser haut :) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 342.39 Tm (- Support eHub entrant depuis Unity/Tan.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 328.89 Tm (- Mode interactif temps reel.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 315.39 Tm (- Plusieurs configurations pretes a charger pour prouver la flexibilite.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 301.89 Tm (- Monitoring de FPS, debit UDP, nombre de paquets, latence et dropped frames.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 288.39 Tm (- Mode simulation local quand l'installation physique n'est pas accessible.) Tj ET
+BT /F2 13 Tf 1 0 0 1 54.00 264.89 Tm (11. Plan d'execution conseille) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 236.89 Tm (Phase 1 - Fondations reseau et mapping : construire le modele de configuration, envoyer un) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 223.39 Tm (paquet ArtNet valide, allumer une LED ou un petit groupe, puis valider le calcul) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 209.89 Tm (univers/canal.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 186.39 Tm (Phase 2 - Couverture installation : encoder le mapping du mur LED et des appareils DMX,) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 172.89 Tm (charger le fichier de configuration, envoyer des patterns simples sur toute l'installation.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 149.39 Tm (Phase 3 - Outil de creation : ajouter une timeline ou un systeme de scenes/effects,) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 135.89 Tm (synchronise avec l'audio. Privilegier des outils rapides a manipuler : couleurs, gradients,) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 122.39 Tm (balayages, pulses, formes, keyframes, presets.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 98.89 Tm (Phase 4 - Performance : isoler le routage sur un thread ou une boucle temps reel, profiler) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 85.39 Tm (CPU/memoire/debit, limiter les allocations, grouper les sorties par IP/univers et eviter les) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 71.89 Tm (paquets inutiles.) Tj ET
+BT /F1 8 Tf 1 0 0 1 54.00 32.00 Tm (Resume projet LED - page 5/6) Tj ET
+endstream
+endobj
+8 0 obj
+<< /Length 3406 >>
+stream
+BT /F1 10 Tf 1 0 0 1 54.00 777.89 Tm (Phase 5 - Debug et demo : construire les moniteurs, enregistrer/rejouer une sequence, produire) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 764.39 Tm (une demo de 30 secondes minimum avec musique, mur LED complet, projecteur statique et lyres.) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 740.89 Tm (Phase 6 - Finition : packager, documenter l'architecture, preparer videos/photos et scenario) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 727.39 Tm (de presentation.) Tj ET
+BT /F2 13 Tf 1 0 0 1 54.00 703.89 Tm (12. Risques a surveiller) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 675.89 Tm (- Mapping faux : un decalage d'univers ou de canal produit rapidement des couleurs) Tj ET
+BT /F1 10 Tf 1 0 0 1 74.00 662.39 Tm (incoherentes.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 648.89 Tm (- Performance reseau : 16k LED a frequence elevee peut saturer CPU, allocations ou UDP) Tj ET
+BT /F1 10 Tf 1 0 0 1 74.00 635.39 Tm (si le routage est naif.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 621.89 Tm (- UI trop ambitieuse : mieux vaut un outil de creation simple, fiable et demonstrable) Tj ET
+BT /F1 10 Tf 1 0 0 1 74.00 608.39 Tm (qu'un grand editeur incomplet.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 594.89 Tm (- Synchronisation audio : le player doit etre base sur un temps stable, pas sur des) Tj ET
+BT /F1 10 Tf 1 0 0 1 74.00 581.39 Tm (timers UI fluctuants.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 567.89 Tm (- Acces concurrent au mur LED : plusieurs groupes peuvent envoyer des messages aux memes) Tj ET
+BT /F1 10 Tf 1 0 0 1 74.00 554.39 Tm (controleurs.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 540.89 Tm (- Appareils DMX oublies : la notation exige de ne pas se limiter au mur 2D.) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 527.39 Tm (- Configuration non reproductible : sans fichiers de config et packaging clair, la demo) Tj ET
+BT /F1 10 Tf 1 0 0 1 74.00 513.89 Tm (sera difficile a rejouer.) Tj ET
+BT /F2 13 Tf 1 0 0 1 54.00 490.39 Tm (13. Sources parcourues) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 462.39 Tm (- https://learn.glassworks.tech/led/) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 448.89 Tm (- https://learn.glassworks.tech/led/category/architecture/) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 435.39 Tm (- https://learn.glassworks.tech/led/arch/architecture/) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 421.89 Tm (- https://learn.glassworks.tech/led/arch/physical/) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 408.39 Tm (- https://learn.glassworks.tech/led/arch/conception/) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 394.89 Tm (- https://learn.glassworks.tech/led/arch/routage/) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 381.39 Tm (- https://learn.glassworks.tech/led/arch/ecran-led/) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 367.89 Tm (- https://learn.glassworks.tech/led/arch/other-devices/) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 354.39 Tm (- https://learn.glassworks.tech/led/category/projet/) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 340.89 Tm (- https://learn.glassworks.tech/led/project/objectives/) Tj ET
+BT /F1 10 Tf 1 0 0 1 66.00 327.39 Tm (- https://learn.glassworks.tech/led/project/exigeances/) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 303.89 Tm (Liens externes references par le cours : fichier Excel de mapping complet, projet Unity de) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 290.39 Tm (simulation, documentation Unity, pages BC216/DMX512/ArtNet. Ces liens ne sont pas recopies) Tj ET
+BT /F1 10 Tf 1 0 0 1 54.00 276.89 Tm (dans cette synthese.) Tj ET
+BT /F1 8 Tf 1 0 0 1 54.00 32.00 Tm (Resume projet LED - page 6/6) Tj ET
+endstream
+endobj
+9 0 obj
+<< /Type /Page /Parent 15 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 1 0 R /F2 2 0 R >> >> /Contents 3 0 R >>
+endobj
+10 0 obj
+<< /Type /Page /Parent 15 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 1 0 R /F2 2 0 R >> >> /Contents 4 0 R >>
+endobj
+11 0 obj
+<< /Type /Page /Parent 15 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 1 0 R /F2 2 0 R >> >> /Contents 5 0 R >>
+endobj
+12 0 obj
+<< /Type /Page /Parent 15 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 1 0 R /F2 2 0 R >> >> /Contents 6 0 R >>
+endobj
+13 0 obj
+<< /Type /Page /Parent 15 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 1 0 R /F2 2 0 R >> >> /Contents 7 0 R >>
+endobj
+14 0 obj
+<< /Type /Page /Parent 15 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 1 0 R /F2 2 0 R >> >> /Contents 8 0 R >>
+endobj
+15 0 obj
+<< /Type /Pages /Kids [9 0 R 10 0 R 11 0 R 12 0 R 13 0 R 14 0 R] /Count 6 >>
+endobj
+16 0 obj
+<< /Type /Catalog /Pages 15 0 R >>
+endobj
+xref
+0 17
+0000000000 65535 f 
+0000000015 00000 n 
+0000000112 00000 n 
+0000000214 00000 n 
+0000004875 00000 n 
+0000009994 00000 n 
+0000014219 00000 n 
+0000018962 00000 n 
+0000023819 00000 n 
+0000027277 00000 n 
+0000027420 00000 n 
+0000027564 00000 n 
+0000027708 00000 n 
+0000027852 00000 n 
+0000027996 00000 n 
+0000028140 00000 n 
+0000028233 00000 n 
+trailer
+<< /Size 17 /Root 16 0 R >>
+startxref
+28284
+%%EOF
