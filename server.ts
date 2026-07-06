@@ -5,6 +5,7 @@ import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { exec } from 'child_process';
 import { ArtNetSender } from './src/router/artnet.ts';
 import { EHubReceiver } from './src/router/ehub.ts';
 import { generateDefaultConfig, RouterConfig, getEntityIdFromGrid } from './src/router/mapping.ts';
@@ -63,7 +64,7 @@ function rebuildUniverseRouteMap() {
     ctrl.universes.forEach((univ) => {
       universeRouteMap.set(univ, {
         ip: ctrl.ip,
-        artnetUniverse: univ - offset,
+        artnetUniverse: univ < offset ? univ : univ - offset,
       });
     });
   });
@@ -71,7 +72,10 @@ function rebuildUniverseRouteMap() {
   // Log per-controller breakdown
   activeConfig.controllers.forEach((ctrl) => {
     const offset = ctrl.startUniverse ?? 0;
-    console.log(`  Controller ${ctrl.ip}: ${ctrl.universes.length} universes [${ctrl.universes[0]}..${ctrl.universes[ctrl.universes.length-1]}] -> ArtNet [${ctrl.universes[0] - offset}..${ctrl.universes[ctrl.universes.length-1] - offset}]`);
+    const getMapped = (u: number) => u < offset ? u : u - offset;
+    const startU = ctrl.universes[0];
+    const endU = ctrl.universes[ctrl.universes.length - 1];
+    console.log(`  Controller ${ctrl.ip}: ${ctrl.universes.length} universes [${startU}..${endU}] -> ArtNet [${getMapped(startU)}..${getMapped(endU)}]`);
   });
 }
 
@@ -124,9 +128,11 @@ let currentTelemetry = {
   ehubPacketsPerSec: 0,
 };
 
+let activeTestPattern: { type: 'controller' | 'all'; controllerIdx?: number; color?: number[] } | null = null;
+
 // 40Hz Main Loop Manager
 function updateRouterState() {
-  const needsLoop = isPlaying || activeOverride !== null;
+  const needsLoop = isPlaying || activeOverride !== null || activeTestPattern !== null;
 
   if (needsLoop) {
     if (!routeInterval) {
@@ -141,7 +147,33 @@ function updateRouterState() {
         }
 
         // 2. Evaluate active blocks & generate DMX values
-        if (isPlaying) {
+        if (activeTestPattern) {
+          if (activeTestPattern.type === 'controller') {
+            const ctrl = activeConfig.controllers[activeTestPattern.controllerIdx!];
+            if (ctrl) {
+              const [r, g, b] = activeTestPattern.color!;
+              ctrl.universes.forEach((univ) => {
+                const buf = getUniverseBuffer(univ);
+                for (let ch = 0; ch < 510; ch += 3) {
+                  buf[ch] = r; buf[ch + 1] = g; buf[ch + 2] = b;
+                }
+                dirtyUniverses.add(univ);
+              });
+            }
+          } else if (activeTestPattern.type === 'all') {
+            const colors = [[255,0,0],[0,255,0],[0,0,255],[255,255,0]];
+            activeConfig.controllers.forEach((ctrl, idx) => {
+              const [r, g, b] = colors[idx] || [128,128,128];
+              ctrl.universes.forEach((univ) => {
+                const buf = getUniverseBuffer(univ);
+                for (let ch = 0; ch < 510; ch += 3) {
+                  buf[ch] = r; buf[ch + 1] = g; buf[ch + 2] = b;
+                }
+                dirtyUniverses.add(univ);
+              });
+            });
+          }
+        } else if (isPlaying) {
           const activeBlocks = timelineBlocks.filter(b => playbackTime >= b.startTime && playbackTime <= b.endTime);
           
           // Evaluate wall block
@@ -158,7 +190,7 @@ function updateRouterState() {
         }
 
         // Apply keyboard overrides if any (passing system timestamp so cycling overrides animate while paused)
-        if (activeOverride) {
+        if (activeOverride && !activeTestPattern) {
           applyInteractiveOverrides(activeOverride, Date.now() / 1000);
         }
 
@@ -381,15 +413,16 @@ function sendPreviewToClients() {
   });
 }
 
-// Send DMX blackout/reset frame 3 times to guarantee cleanup
 function sendBlackout() {
   console.log('Sending blackout frames to all controllers...');
   
   const sendFrame = () => {
     activeConfig.controllers.forEach((ctrl) => {
+      const offset = ctrl.startUniverse ?? 0;
       ctrl.universes.forEach((univ) => {
         const buf = new Uint8Array(512); // all 0s
-        artnetSender.send(univ, buf, { ip: ctrl.ip });
+        const artnetUniverse = univ < offset ? univ : univ - offset;
+        artnetSender.send(artnetUniverse, buf, { ip: ctrl.ip });
         
         // Reset local cached buffers as well
         const cached = universeBuffers.get(univ);
@@ -422,6 +455,7 @@ setInterval(() => {
       activeOverride,
       isPlaying,
       loopRunning: routeInterval !== null,
+      activeTestPattern: activeTestPattern ? { type: activeTestPattern.type, controllerIdx: activeTestPattern.controllerIdx } : null,
     };
     stats.framesProcessed = 0;
     stats.packetsSent = 0;
@@ -496,63 +530,56 @@ wss.on('connection', (ws) => {
       const msg = JSON.parse(message.toString());
 
       if (msg.type === 'play') {
+        activeTestPattern = null;
         isPlaying = true;
         updateRouterState();
       } else if (msg.type === 'stop') {
+        activeTestPattern = null;
         isPlaying = false;
         playbackTime = 0;
         updateRouterState();
       } else if (msg.type === 'blackout') {
+        activeTestPattern = null;
         isPlaying = false;
         playbackTime = 0;
         activeOverride = null;
         updateRouterState();
       } else if (msg.type === 'override') {
+        activeTestPattern = null;
         activeOverride = msg.key;
         console.log(`[Override] ${msg.key ? 'ACTIVATED: ' + msg.key : 'RELEASED'} | isPlaying=${isPlaying} | loopRunning=${routeInterval !== null}`);
         updateRouterState();
         console.log(`[Override] After updateRouterState: loopRunning=${routeInterval !== null}`);
       } else if (msg.type === 'test-controller') {
-        // Send a solid color to a specific controller to test connectivity
         const { controllerIdx, color } = msg;
-        const ctrl = activeConfig.controllers[controllerIdx];
-        if (ctrl) {
-          console.log(`[Test] Sending ${color} to controller ${ctrl.ip} (${ctrl.universes.length} universes, startUniverse=${ctrl.startUniverse ?? 0})`);
-          const [r, g, b] = color;
-          const offset = ctrl.startUniverse ?? 0;
-          // Fill all universes for this controller
-          ctrl.universes.forEach((univ) => {
-            const buf = getUniverseBuffer(univ);
-            // Write solid color to first 510 channels (170 RGB LEDs)
-            for (let ch = 0; ch < 510; ch += 3) {
-              buf[ch] = r; buf[ch + 1] = g; buf[ch + 2] = b;
-            }
-            const artnetUniv = univ - offset;
-            artnetSender.send(artnetUniv, buf, { ip: ctrl.ip });
-            console.log(`  Sent universe ${univ} -> ArtNet ${artnetUniv} to ${ctrl.ip}`);
-          });
-          // Send preview
-          sendPreviewToClients();
-          broadcastToClients({ type: 'log', message: `Test sent to ${ctrl.ip}: ${ctrl.universes.length} universes (ArtNet ${0}-${ctrl.universes.length - 1})` });
+        if (activeTestPattern && activeTestPattern.type === 'controller' && activeTestPattern.controllerIdx === controllerIdx) {
+          // Toggle off
+          activeTestPattern = null;
+          console.log('[Test] Toggle off test pattern for controller', controllerIdx);
+          updateRouterState();
+          broadcastToClients({ type: 'log', message: 'Test pattern deactivated.' });
+        } else {
+          // Toggle on
+          activeTestPattern = { type: 'controller', controllerIdx, color };
+          console.log('[Test] Toggle on streaming test pattern for controller', controllerIdx);
+          updateRouterState();
+          const ctrl = activeConfig.controllers[controllerIdx];
+          broadcastToClients({ type: 'log', message: `Streaming test pattern to ${ctrl?.ip || 'unknown'}` });
         }
       } else if (msg.type === 'test-all') {
-        // Send distinct colors to each controller quadrant
-        const colors = [[255,0,0],[0,255,0],[0,0,255],[255,255,0]];
-        console.log('[Test] Sending test pattern to ALL controllers...');
-        activeConfig.controllers.forEach((ctrl, idx) => {
-          const [r, g, b] = colors[idx] || [128,128,128];
-          const offset = ctrl.startUniverse ?? 0;
-          ctrl.universes.forEach((univ) => {
-            const buf = getUniverseBuffer(univ);
-            for (let ch = 0; ch < 510; ch += 3) {
-              buf[ch] = r; buf[ch + 1] = g; buf[ch + 2] = b;
-            }
-            artnetSender.send(univ - offset, buf, { ip: ctrl.ip });
-          });
-          console.log(`  Controller ${ctrl.ip}: ${colors[idx]} -> ArtNet [0..${ctrl.universes.length - 1}]`);
-        });
-        sendPreviewToClients();
-        broadcastToClients({ type: 'log', message: 'Test ALL: RED=.45, GREEN=.46, BLUE=.47, YELLOW=.48' });
+        if (activeTestPattern && activeTestPattern.type === 'all') {
+          // Toggle off
+          activeTestPattern = null;
+          console.log('[Test] Toggle off test ALL');
+          updateRouterState();
+          broadcastToClients({ type: 'log', message: 'Test pattern deactivated.' });
+        } else {
+          // Toggle on
+          activeTestPattern = { type: 'all' };
+          console.log('[Test] Toggle on streaming test ALL');
+          updateRouterState();
+          broadcastToClients({ type: 'log', message: 'Streaming test pattern to ALL controllers (R/G/B/Y).' });
+        }
       }
     } catch (e) {
       console.error('Error handling WebSocket message:', e);
@@ -690,6 +717,44 @@ app.get('/api/test-pattern', (req, res) => {
       startUniverse: c.startUniverse ?? 0,
       artnetRange: `${0}-${c.universes.length - 1}`,
     })),
+  });
+});
+
+// Ping endpoint to test controller reachability
+app.get('/api/ping', async (req, res) => {
+  console.log('[Ping] Diagnosing controller reachability...');
+  const pingResults = await Promise.all(
+    activeConfig.controllers.map(async (ctrl) => {
+      const ip = ctrl.ip;
+      if (ip === '127.0.0.1' || ip === 'localhost') {
+        return { ip, status: 'ONLINE', latency: '0ms (localhost)' };
+      }
+
+      return new Promise<{ ip: string; status: 'ONLINE' | 'OFFLINE'; latency: string }>((resolve) => {
+        // Windows: -n 1 (1 ping packet), -w 800 (800ms timeout)
+        exec(`ping -n 1 -w 800 ${ip}`, (error, stdout) => {
+          if (error) {
+            resolve({ ip, status: 'OFFLINE', latency: 'unreachable' });
+          } else {
+            let latency = 'unknown';
+            const match = stdout.match(/(?:time|temps|average|moyen|minimum|maximum)[= ]+(\d+)\s*ms/i);
+            if (match) {
+              latency = `${match[1]}ms`;
+            } else if (stdout.includes('TTL=') || stdout.includes('ttl=')) {
+              latency = '<10ms';
+            }
+            resolve({ ip, status: 'ONLINE', latency });
+          }
+        });
+      });
+    })
+  );
+
+  console.log('[Ping] Results:', pingResults);
+  res.json({
+    success: true,
+    timestamp: new Date().toISOString(),
+    results: pingResults,
   });
 });
 

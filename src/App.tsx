@@ -38,8 +38,38 @@ export default function App() {
 
   const wsRef = useRef<WebSocket | null>(null);
 
+  const [pingStatus, setPingStatus] = useState<Record<string, { status: string; latency: string }>>({});
+  const [isPinging, setIsPinging] = useState(false);
+
   const addLog = (msg: string) => {
     setConsoleLogs((prev) => [ `[${new Date().toLocaleTimeString()}] ${msg}`, ...prev.slice(0, 15) ]);
+  };
+
+  const runPingDiagnostics = async () => {
+    setIsPinging(true);
+    addLog('Démarrage du diagnostic ping des contrôleurs...');
+    try {
+      const response = await fetch('/api/ping');
+      const data = await response.json();
+      if (data.success) {
+        const resultsMap: Record<string, { status: string; latency: string }> = {};
+        data.results.forEach((res: any) => {
+          resultsMap[res.ip] = { status: res.status, latency: res.latency };
+          addLog(`  IP ${res.ip}: ${res.status === 'ONLINE' ? '🟢 EN LIGNE' : '🔴 HORS LIGNE'} (${res.latency})`);
+        });
+        setPingStatus(resultsMap);
+      } else {
+        addLog('Erreur lors du diagnostic ping.');
+      }
+    } catch (err) {
+      addLog(`Erreur de communication API: ${(err as Error).message}`);
+    } finally {
+      setIsPinging(false);
+    }
+  };
+
+  const blurAll = () => {
+    (document.activeElement as HTMLElement)?.blur();
   };
 
   // Connect to WebSocket Server
@@ -136,6 +166,7 @@ export default function App() {
   }, [isPlaying]);
 
   const handlePlay = () => {
+    blurAll();
     if (isPlaying) {
       setIsPlaying(false);
       addLog('Show paused.');
@@ -152,6 +183,7 @@ export default function App() {
   };
 
   const handleStop = () => {
+    blurAll();
     synthInstance.stop();
     setIsPlaying(false);
     setCurrentTime(0);
@@ -162,6 +194,7 @@ export default function App() {
   };
 
   const handleBlackout = () => {
+    blurAll();
     synthInstance.stop();
     setIsPlaying(false);
     setCurrentTime(0);
@@ -348,35 +381,83 @@ export default function App() {
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                   <button
                     onClick={() => {
+                      blurAll();
+                      runPingDiagnostics();
+                    }}
+                    disabled={isPinging}
+                    style={{ backgroundColor: 'var(--color-accent)', fontSize: '0.8rem', padding: '8px 14px' }}
+                  >
+                    {isPinging ? '🔄 Diagnostic...' : '📡 Tester Connectivité Wifi (Ping)'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      blurAll();
                       addLog('Sending TEST ALL controllers...');
                       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                         wsRef.current.send(JSON.stringify({ type: 'test-all' }));
                       }
                     }}
-                    style={{ backgroundColor: 'hsl(260, 60%, 45%)', fontSize: '0.8rem', padding: '8px 14px' }}
+                    style={{ 
+                      backgroundColor: telemetry.activeTestPattern?.type === 'all' ? 'hsl(260, 80%, 55%)' : 'hsl(260, 60%, 45%)', 
+                      fontSize: '0.8rem', 
+                      padding: '8px 14px',
+                      border: telemetry.activeTestPattern?.type === 'all' ? '2px solid white' : 'none',
+                      borderRadius: '6px',
+                      cursor: 'pointer'
+                    }}
                   >
-                    🎨 Test ALL (R/G/B/Y)
+                    🎨 {telemetry.activeTestPattern?.type === 'all' ? '🛑 STOP TEST ALL' : 'Test ALL (R/G/B/Y)'}
                   </button>
                   {(config?.controllers || []).map((ctrl: any, i: number) => {
                     const colors = ['#ef4444', '#22c55e', '#3b82f6', '#eab308'];
                     const labels = ['RED', 'GREEN', 'BLUE', 'YELLOW'];
+                    const isActive = telemetry.activeTestPattern?.type === 'controller' && telemetry.activeTestPattern?.controllerIdx === i;
                     return (
                       <button
                         key={i}
                         onClick={() => {
+                          blurAll();
                           const colorMap = [[255,0,0],[0,255,0],[0,0,255],[255,255,0]];
                           addLog(`Testing controller ${ctrl.ip} (${labels[i]})...`);
                           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                             wsRef.current.send(JSON.stringify({ type: 'test-controller', controllerIdx: i, color: colorMap[i] }));
                           }
                         }}
-                        style={{ backgroundColor: colors[i], color: i === 3 ? '#000' : '#fff', fontSize: '0.75rem', padding: '6px 10px' }}
+                        style={{ 
+                          backgroundColor: colors[i], 
+                          color: i === 3 ? '#000' : '#fff', 
+                          fontSize: '0.75rem', 
+                          padding: '6px 10px',
+                          border: isActive ? '2px solid #ffffff' : '1px solid rgba(255,255,255,0.1)',
+                          boxShadow: isActive ? `0 0 12px ${colors[i]}` : 'none',
+                          fontWeight: isActive ? 'bold' : 'normal',
+                          borderRadius: '6px',
+                          cursor: 'pointer'
+                        }}
                       >
-                        {ctrl.ip}
+                        {isActive ? `📡 ${labels[i]} (Streaming)` : ctrl.ip}
                       </button>
                     );
                   })}
                 </div>
+
+                {/* Ping results */}
+                {Object.keys(pingStatus).length > 0 && (
+                  <div style={{ fontSize: '0.8rem', backgroundColor: 'var(--bg-base)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-muted)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.7rem', textTransform: 'uppercase', fontWeight: 'bold' }}>Résultats Ping Wifi</div>
+                    {Object.entries(pingStatus).map(([ip, data]: any) => (
+                      <div key={ip} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontFamily: 'JetBrains Mono', color: 'var(--text-primary)' }}>{ip}</span>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                          <span style={{ fontSize: '0.75rem', fontFamily: 'JetBrains Mono', color: 'var(--text-muted)' }}>{data.latency}</span>
+                          <span className={`badge ${data.status === 'ONLINE' ? 'badge-green' : 'badge-red'}`} style={{ fontSize: '0.7rem', padding: '2px 6px' }}>
+                            {data.status}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {/* Per-IP packet counts */}
                 {telemetry.packetCountPerIp && (
