@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Play, Pause, Square, Radio, Cpu, Settings, Activity, Trash2, Plus, Volume2 } from 'lucide-react';
 import { Visualizer } from './components/Visualizer.tsx';
 import { synthInstance } from './components/AudioEngine.ts';
+import { analyzeAudioBeats } from './components/AudioAnalyzer.ts';
 
 interface TimelineBlock {
   id: string;
@@ -21,15 +22,48 @@ export default function App() {
   const [consoleLogs, setConsoleLogs] = useState<string[]>(['System initialized. Austrian theme selected.']);
   const [config, setConfig] = useState<any>(null);
 
+  // Audio Analyzer states
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisStatus, setAnalysisStatus] = useState('');
+  const [detectedBeatsCount, setDetectedBeatsCount] = useState<number | null>(null);
+
+  // Function to run beat analysis and sync with server
+  const runBeatAnalysis = async (customSocket?: WebSocket) => {
+    setIsAnalyzing(true);
+    setAnalysisStatus("Initialisation de l'analyse rythmique...");
+    const peaks = await analyzeAudioBeats((msg) => {
+      setAnalysisStatus(msg);
+    });
+    setIsAnalyzing(false);
+    setDetectedBeatsCount(peaks.length);
+    
+    const targetSocket = customSocket || wsRef.current;
+    if (peaks.length > 0 && targetSocket && targetSocket.readyState === WebSocket.OPEN) {
+      targetSocket.send(JSON.stringify({ type: 'set-beats', beats: peaks }));
+    }
+  };
+
   // Read-only visual tracks representation in UI
   const [blocks, setBlocks] = useState<TimelineBlock[]>([
-    { id: '1', lane: 'wall', startTime: 0, endTime: 12, type: 'radial_ripple', name: 'Waltz Ripples (Red/White)' },
-    { id: '2', lane: 'lyres', startTime: 0, endTime: 12, type: 'lyre_waltz', name: 'Slow Gold Waltz Pan/Tilt' },
-    { id: '3', lane: 'wall', startTime: 12, endTime: 15, type: 'gradient_sweep', name: 'Speed Up Flag Sweep' },
-    { id: '4', lane: 'lyres', startTime: 12, endTime: 15, type: 'lyre_rise', name: 'Beams Rise' },
-    { id: '5', lane: 'wall', startTime: 15, endTime: 35, type: 'strobe_flash', name: 'Austria Strobe Drops' },
-    { id: '6', lane: 'wall', startTime: 20, endTime: 35, type: 'equalizer', name: 'Trap Audio Spectrum' },
-    { id: '7', lane: 'lyres', startTime: 15, endTime: 35, type: 'lyre_trap', name: 'Fast Mirrored Cross Chases' },
+    { id: '1', lane: 'wall', startTime: 0, endTime: 3.7, type: 'intro_ticks', name: 'Intro Ticks' },
+    { id: '2', lane: 'lyres', startTime: 0, endTime: 3.7, type: 'lyre_intro', name: 'Intro Silver Sweep' },
+    { id: '3', lane: 'static', startTime: 0, endTime: 3.7, type: 'static_off', name: 'Spotlight Off' },
+ 
+    { id: '4', lane: 'wall', startTime: 3.7, endTime: 11.1, type: 'blue_star_burst', name: 'COSMÓ Blue Star' },
+    { id: '5', lane: 'lyres', startTime: 3.7, endTime: 11.1, type: 'lyre_kick_pulse', name: 'Lyres Kick Snap' },
+    { id: '6', lane: 'static', startTime: 3.7, endTime: 11.1, type: 'static_measure_pulse', name: 'Spot Blue Pulse' },
+ 
+    { id: '7', lane: 'wall', startTime: 11.1, endTime: 18.5, type: 'quadrant_flashes', name: 'Quadrant Flash' },
+    { id: '8', lane: 'lyres', startTime: 11.1, endTime: 18.5, type: 'lyre_circle_color', name: 'Lyres Color Circle' },
+    { id: '9', lane: 'static', startTime: 11.1, endTime: 18.5, type: 'static_snare_flash', name: 'Spot Magenta Snare' },
+ 
+    { id: '10', lane: 'wall', startTime: 18.5, endTime: 25.8, type: 'laser_sweeps', name: 'Tanzschein Lasers' },
+    { id: '11', lane: 'lyres', startTime: 18.5, endTime: 25.8, type: 'lyre_buildup_strobe', name: 'Lyres Buildup Strobe' },
+    { id: '12', lane: 'static', startTime: 18.5, endTime: 25.8, type: 'static_dimmer_rise', name: 'Spot Dimmer Rise' },
+ 
+    { id: '13', lane: 'wall', startTime: 25.8, endTime: 45.0, type: 'reactive_drop', name: 'Tanzschein Drop' },
+    { id: '14', lane: 'lyres', startTime: 25.8, endTime: 45.0, type: 'lyre_drop_trap', name: 'Lyres Mirrored Chases' },
+    { id: '15', lane: 'static', startTime: 25.8, endTime: 45.0, type: 'static_drop_strobe', name: 'Spot Strobe Drop' }
   ]);
 
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
@@ -37,6 +71,7 @@ export default function App() {
   const [frameState, setFrameState] = useState<Record<number, number[]>>({});
 
   const wsRef = useRef<WebSocket | null>(null);
+  const currentTimeRef = useRef(0);
 
   const [pingStatus, setPingStatus] = useState<Record<string, { status: string; latency: string }>>({});
   const [isPinging, setIsPinging] = useState(false);
@@ -81,6 +116,8 @@ export default function App() {
     socket.onopen = () => {
       setWsConnected(true);
       addLog('Connected to ArtNet Routing Server via WebSocket.');
+      // Automatically run beat analysis and upload to server on load
+      runBeatAnalysis(socket);
     };
 
     socket.onmessage = (event) => {
@@ -94,6 +131,7 @@ export default function App() {
           // Sync UI clock and pixel visualizer state with backend
           setFrameState(msg.data);
           setCurrentTime(msg.time);
+          synthInstance.syncTime(msg.time);
         } else if (msg.type === 'clear') {
           setFrameState({});
           setCurrentTime(0);
@@ -127,6 +165,14 @@ export default function App() {
         keyToSend = 'a';
       } else if (code === 'keyl') {
         keyToSend = 'l';
+      } else if (code === 'keyc') {
+        keyToSend = 'c';
+      } else if (code === 'keyg') {
+        keyToSend = 'g';
+      } else if (code === 'keym') {
+        keyToSend = 'm';
+      } else if (code === 'keyn') {
+        keyToSend = 'n';
       }
 
       if (keyToSend && interactiveOverride !== keyToSend) {
@@ -156,10 +202,15 @@ export default function App() {
     };
   }, [interactiveOverride]);
 
+  // Keep currentTime ref updated to avoid effect re-triggering during playback
+  useEffect(() => {
+    currentTimeRef.current = currentTime;
+  }, [currentTime]);
+
   // Sync Synthesizer with backend playback state
   useEffect(() => {
     if (isPlaying) {
-      synthInstance.play(() => {}); // Play locally on speakers
+      synthInstance.play(currentTimeRef.current, () => {}); // Play locally starting at the ref's current time
     } else {
       synthInstance.pause();
     }
@@ -335,6 +386,10 @@ export default function App() {
                     { key: 'space', label: '⬜ Austrian Flag Cross', color: 'badge-red', kbd: 'ESPACE' },
                     { key: 'a', label: '✨ Gold Imperial Sparkles', color: 'badge-gold', kbd: 'A' },
                     { key: 'l', label: '💡 Lyres Sky Strobe', color: 'badge-cyan', kbd: 'L' },
+                    { key: 'c', label: '🎤 Singer COSMÓ (Star Eye)', color: 'badge-blue', kbd: 'C' },
+                    { key: 'g', label: '🦌 Dancer Gazelle Mask', color: 'badge-cyan', kbd: 'G' },
+                    { key: 'm', label: '🦍 Dancer Gorilla Mask', color: 'badge-green', kbd: 'M' },
+                    { key: 'n', label: '🦁 Dancer Lion Mask', color: 'badge-orange', kbd: 'N' },
                   ].map(({ key, label, color, kbd }) => (
                     <button
                       key={key}
@@ -372,6 +427,49 @@ export default function App() {
                       </span>
                     </button>
                   ))}
+                </div>
+              </div>
+
+              {/* Beat Detector Panel */}
+              <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <h3 style={{ fontSize: '1.1rem', color: 'var(--text-primary)' }}>📊 Beat Detector & Audio Sync</h3>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  Analyse le fichier audio pour extraire les transitoires (Kicks, impacts) et les synchroniser avec le serveur DMX.
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <button
+                    onClick={() => {
+                      blurAll();
+                      runBeatAnalysis();
+                    }}
+                    disabled={isAnalyzing}
+                    style={{ 
+                      backgroundColor: 'var(--color-primary)', 
+                      color: 'white',
+                      fontSize: '0.85rem', 
+                      padding: '10px 16px', 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center', 
+                      gap: '8px',
+                      border: 'none',
+                      borderRadius: '6px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <Volume2 size={16} />
+                    {isAnalyzing ? "🔄 Analyse en cours..." : "🎙️ Analyser Rythmique MP3"}
+                  </button>
+                  {analysisStatus && (
+                    <div style={{ fontSize: '0.8rem', color: 'var(--color-accent)', padding: '6px', borderRadius: '4px', backgroundColor: 'rgba(0,255,255,0.05)', border: '1px solid rgba(0,255,255,0.1)' }}>
+                      {analysisStatus}
+                    </div>
+                  )}
+                  {detectedBeatsCount !== null && (
+                    <div style={{ fontSize: '0.8rem', color: '#22c55e' }}>
+                      ✅ {detectedBeatsCount} impacts rythmiques enregistrés et synchronisés !
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -503,9 +601,9 @@ export default function App() {
             <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h3 style={{ fontSize: '1.1rem' }}>Show Sequence Ruler</h3>
-                <span className="badge badge-gold">Track: Apashe - Lacrimosa (35s Extract)</span>
+                <span className="badge badge-gold">Track: COSMÓ - Tanzschein (45s Showcase - Eurovision 2026)</span>
               </div>
-
+ 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', backgroundColor: 'var(--bg-base)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-accent)' }}>
                 {/* Lane 1 */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
@@ -517,8 +615,8 @@ export default function App() {
                         onClick={() => setSelectedBlockId(b.id)}
                         style={{
                           position: 'absolute',
-                          left: `${(b.startTime / 35) * 100}%`,
-                          width: `${((b.endTime - b.startTime) / 35) * 100}%`,
+                          left: `${(b.startTime / 45) * 100}%`,
+                          width: `${((b.endTime - b.startTime) / 45) * 100}%`,
                           height: '100%',
                           backgroundColor: 'rgba(230, 20, 30, 0.25)',
                           border: selectedBlockId === b.id ? '2px solid var(--color-red)' : '1px solid var(--color-red)',
@@ -536,7 +634,7 @@ export default function App() {
                     ))}
                   </div>
                 </div>
-
+ 
                 {/* Lane 2 */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
                   <div style={{ width: '100px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Moving Heads</div>
@@ -547,8 +645,8 @@ export default function App() {
                         onClick={() => setSelectedBlockId(b.id)}
                         style={{
                           position: 'absolute',
-                          left: `${(b.startTime / 35) * 100}%`,
-                          width: `${((b.endTime - b.startTime) / 35) * 100}%`,
+                          left: `${(b.startTime / 45) * 100}%`,
+                          width: `${((b.endTime - b.startTime) / 45) * 100}%`,
                           height: '100%',
                           backgroundColor: 'rgba(235, 180, 45, 0.2)',
                           border: selectedBlockId === b.id ? '2px solid var(--color-gold)' : '1px solid var(--color-gold)',
@@ -567,22 +665,54 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* Lane 3 */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                  <div style={{ width: '100px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Static Spotlight</div>
+                  <div style={{ flex: 1, height: '40px', backgroundColor: 'var(--bg-surface-elevated)', borderRadius: '6px', position: 'relative', overflow: 'hidden' }}>
+                    {blocks.filter(b => b.lane === 'static').map(b => (
+                      <div
+                        key={b.id}
+                        onClick={() => setSelectedBlockId(b.id)}
+                        style={{
+                          position: 'absolute',
+                          left: `${(b.startTime / 45) * 100}%`,
+                          width: `${((b.endTime - b.startTime) / 45) * 100}%`,
+                          height: '100%',
+                          backgroundColor: 'rgba(59, 130, 246, 0.25)',
+                          border: selectedBlockId === b.id ? '2px solid var(--color-cyan)' : '1px solid var(--color-cyan)',
+                          borderRadius: '4px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          paddingLeft: '8px',
+                          fontSize: '0.75rem',
+                          color: '#fff',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {b.name}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+ 
                 {/* Slider */}
                 <div style={{ position: 'relative', height: '24px', marginTop: '10px' }}>
                   <input
                     type="range"
                     min={0}
-                    max={35}
+                    max={45}
                     step={0.1}
                     value={currentTime}
                     disabled // Driven strictly by server playback loop
                     style={{ width: '100%', cursor: 'not-allowed' }}
                   />
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px', fontFamily: 'JetBrains Mono' }}>
-                    <span>0s (Intro Waltz)</span>
-                    <span>12s (Build Up)</span>
-                    <span>15s (Mozart Drop)</span>
-                    <span>35s (End)</span>
+                    <span>0s (Intro Ticks)</span>
+                    <span>7.4s (Blue Star)</span>
+                    <span>14.8s (Quadrants)</span>
+                    <span>22.2s (Buildup)</span>
+                    <span>29.5s (Tanzschein Drop)</span>
+                    <span>45s (End)</span>
                   </div>
                 </div>
               </div>
@@ -631,16 +761,27 @@ export default function App() {
                         >
                           {block.lane === 'wall' ? (
                             <>
-                              <option value="radial_ripple">Radial Flag Ripples</option>
-                              <option value="gradient_sweep">Speed Up Sweep</option>
-                              <option value="strobe_flash">Austrian Flag Strobe</option>
-                              <option value="equalizer">Equalizer Spectrum</option>
+                              <option value="intro_ticks">Intro Ticks</option>
+                              <option value="blue_star_burst">COSMÓ Blue Star</option>
+                              <option value="quadrant_flashes">Quadrant Flash</option>
+                              <option value="laser_sweeps">Tanzschein Lasers</option>
+                              <option value="reactive_drop">Tanzschein Drop</option>
+                            </>
+                          ) : block.lane === 'lyres' ? (
+                            <>
+                              <option value="lyre_intro">Intro Silver Sweep</option>
+                              <option value="lyre_kick_pulse">Lyres Kick Snap</option>
+                              <option value="lyre_circle_color">Lyres Color Circle</option>
+                              <option value="lyre_buildup_strobe">Lyres Buildup Strobe</option>
+                              <option value="lyre_drop_trap">Lyres Mirrored Chases</option>
                             </>
                           ) : (
                             <>
-                              <option value="lyre_waltz">Slow circular Waltz</option>
-                              <option value="lyre_rise">Beams Rise</option>
-                              <option value="lyre_trap">Aggressive trap chases</option>
+                              <option value="static_off">Spotlight Off</option>
+                              <option value="static_measure_pulse">Spot Blue Pulse</option>
+                              <option value="static_snare_flash">Spot Magenta Snare</option>
+                              <option value="static_dimmer_rise">Spot Dimmer Rise</option>
+                              <option value="static_drop_strobe">Spot Strobe Drop</option>
                             </>
                           )}
                         </select>

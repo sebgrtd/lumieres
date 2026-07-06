@@ -95,21 +95,41 @@ interface TimelineBlock {
   name: string;
 }
 
+// BPM Constants for COSMÓ - Tanzschein (130 BPM)
+const BPM = 130;
+const BEAT_DURATION = 60 / BPM; // ~0.4615s
+const MEASURE_DURATION = BEAT_DURATION * 4; // ~1.846s
+const AUDIO_OFFSET = 0.1; // adjust if audio start has delay
+
 let timelineBlocks: TimelineBlock[] = [
-  { id: '1', lane: 'wall', startTime: 0, endTime: 12, type: 'radial_ripple', name: 'Waltz Ripples (Red/White)' },
-  { id: '2', lane: 'lyres', startTime: 0, endTime: 12, type: 'lyre_waltz', name: 'Slow Gold Waltz Pan/Tilt' },
-  { id: '3', lane: 'wall', startTime: 12, endTime: 15, type: 'gradient_sweep', name: 'Speed Up Flag Sweep' },
-  { id: '4', lane: 'lyres', startTime: 12, endTime: 15, type: 'lyre_rise', name: 'Beams Rise' },
-  { id: '5', lane: 'wall', startTime: 15, endTime: 35, type: 'strobe_flash', name: 'Austria Strobe Drops' },
-  { id: '6', lane: 'wall', startTime: 20, endTime: 35, type: 'equalizer', name: 'Trap Audio Spectrum' },
-  { id: '7', lane: 'lyres', startTime: 15, endTime: 35, type: 'lyre_trap', name: 'Fast Mirrored Cross Chases' },
+  { id: '1', lane: 'wall', startTime: 0, endTime: 3.7, type: 'intro_ticks', name: 'Intro Ticks' },
+  { id: '2', lane: 'lyres', startTime: 0, endTime: 3.7, type: 'lyre_intro', name: 'Intro Silver Sweep' },
+  { id: '3', lane: 'static', startTime: 0, endTime: 3.7, type: 'static_off', name: 'Spotlight Off' },
+
+  { id: '4', lane: 'wall', startTime: 3.7, endTime: 11.1, type: 'blue_star_burst', name: 'COSMÓ Blue Star Burst' },
+  { id: '5', lane: 'lyres', startTime: 3.7, endTime: 11.1, type: 'lyre_kick_pulse', name: 'Lyres Kick Snap' },
+  { id: '6', lane: 'static', startTime: 3.7, endTime: 11.1, type: 'static_measure_pulse', name: 'Spot Blue Measure Pulse' },
+
+  { id: '7', lane: 'wall', startTime: 11.1, endTime: 18.5, type: 'quadrant_flashes', name: 'Quadrant Controller Flash' },
+  { id: '8', lane: 'lyres', startTime: 11.1, endTime: 18.5, type: 'lyre_circle_color', name: 'Lyres Color Circular' },
+  { id: '9', lane: 'static', startTime: 11.1, endTime: 18.5, type: 'static_snare_flash', name: 'Spot Magenta Snare Flash' },
+
+  { id: '10', lane: 'wall', startTime: 18.5, endTime: 25.8, type: 'laser_sweeps', name: 'Tanzschein Laser Sweeps' },
+  { id: '11', lane: 'lyres', startTime: 18.5, endTime: 25.8, type: 'lyre_buildup_strobe', name: 'Lyres Strobe Crescendo' },
+  { id: '12', lane: 'static', startTime: 18.5, endTime: 25.8, type: 'static_dimmer_rise', name: 'Spot Dimmer Rise' },
+
+  { id: '13', lane: 'wall', startTime: 25.8, endTime: 45.0, type: 'reactive_drop', name: 'Tanzschein Chorus Drop' },
+  { id: '14', lane: 'lyres', startTime: 25.8, endTime: 45.0, type: 'lyre_drop_trap', name: 'Lyres Mirror Trap Chases' },
+  { id: '15', lane: 'static', startTime: 25.8, endTime: 45.0, type: 'static_drop_strobe', name: 'Spot Strobe Drop' }
 ];
 
 // Playback state
 let isPlaying = false;
 let playbackTime = 0;
+let playbackStartRealTime = 0;
 let routeInterval: NodeJS.Timeout | null = null;
 let activeOverride: string | null = null;
+let detectedBeats: number[] = [];
 
 // Telemetry Stats
 let stats = {
@@ -138,12 +158,20 @@ function updateRouterState() {
     if (!routeInterval) {
       console.log('Starting ArtNet transmission loop (40Hz)...');
       routeInterval = setInterval(() => {
-        // 1. Advance Playback Clock if show is playing
+        // 1. Advance Playback Clock if show is playing (using real-world time to avoid interval lag)
         if (isPlaying) {
-          playbackTime += 0.025;
-          if (playbackTime > 35) {
-            playbackTime = 0; // Loop show
+          const now = Date.now();
+          playbackTime = (now - playbackStartRealTime) / 1000;
+          if (playbackTime > 45) {
+            playbackTime = 0; // Loop show at 45 seconds
+            playbackStartRealTime = now;
           }
+        }
+
+        // Check if current playbackTime matches any client-analyzed beat (within 45ms window)
+        let isAudioImpact = false;
+        if (isPlaying && detectedBeats.length > 0) {
+          isAudioImpact = detectedBeats.some(b => Math.abs(playbackTime - b) < 0.045);
         }
 
         // 2. Evaluate active blocks & generate DMX values
@@ -178,15 +206,20 @@ function updateRouterState() {
           
           // Evaluate wall block
           const wallBlock = activeBlocks.find(b => b.lane === 'wall');
-          evaluateWallBlock(wallBlock ? wallBlock.type : 'black', playbackTime);
+          evaluateWallBlock(wallBlock ? wallBlock.type : 'black', playbackTime, isAudioImpact);
 
           // Evaluate DMX Lyres block
           const lyresBlock = activeBlocks.find(b => b.lane === 'lyres');
-          evaluateLyresBlock(lyresBlock ? lyresBlock.type : 'black', playbackTime);
+          evaluateLyresBlock(lyresBlock ? lyresBlock.type : 'black', playbackTime, isAudioImpact);
+
+          // Evaluate Static Spotlight block
+          const staticBlock = activeBlocks.find(b => b.lane === 'static');
+          evaluateStaticBlock(staticBlock ? staticBlock.type : 'static_off', playbackTime, isAudioImpact);
         } else {
           // If the show is paused/stopped, output black background and let overrides apply on top
-          evaluateWallBlock('black', playbackTime);
-          evaluateLyresBlock('black', playbackTime);
+          evaluateWallBlock('black', playbackTime, isAudioImpact);
+          evaluateLyresBlock('black', playbackTime, isAudioImpact);
+          evaluateStaticBlock('static_off', playbackTime, isAudioImpact);
         }
 
         // Apply keyboard overrides if any (passing system timestamp so cycling overrides animate while paused)
@@ -230,7 +263,13 @@ function updateRouterState() {
 
 // Visual generators running fully on backend
 
-function evaluateWallBlock(type: string, time: number) {
+function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = false) {
+  const adjustedTime = time + AUDIO_OFFSET;
+  const beatIdx = Math.floor(adjustedTime / BEAT_DURATION);
+  const beatProgress = (adjustedTime % BEAT_DURATION) / BEAT_DURATION;
+  const measureIdx = Math.floor(beatIdx / 4);
+  const beatInMeasure = beatIdx % 4;
+
   for (let x = 0; x < 128; x++) {
     for (let y = 0; y < 128; y++) {
       const id = getEntityIdFromGrid(x, y);
@@ -239,40 +278,198 @@ function evaluateWallBlock(type: string, time: number) {
 
       let r = 0, g = 0, b = 0;
 
-      if (type === 'radial_ripple') {
+      if (type === 'intro_ticks') {
+        // 1. Concentric shrinking neon square tunnel (ticking clock feel)
+        const dx = Math.abs(x - 64);
+        const dy = Math.abs(y - 64);
+        const maxDist = Math.max(dx, dy);
+        
+        // Concentric squares that shrink on beats 1 & 3 of each measure
+        if (beatInMeasure === 0 || beatInMeasure === 2) {
+          const size = Math.floor((1.0 - beatProgress) * 64);
+          if (maxDist === size || maxDist === size - 1) {
+            r = 0; g = 220; b = 255; // Electric Cyan
+          }
+        }
+        
+        // Center dot pulses on every beat
+        const dist = Math.sqrt((x-64)*(x-64) + (y-64)*(y-64));
+        if (dist < 4) {
+          const intensity = Math.floor(255 * (1 - beatProgress));
+          r = g = b = intensity;
+        }
+
+        // Smooth fade-out at the end of the intro block (from 3.4s to 3.7s)
+        if (time > 3.4 && time <= 3.7) {
+          const fade = (3.7 - time) / 0.3;
+          r = Math.round(r * fade);
+          g = Math.round(g * fade);
+          b = Math.round(b * fade);
+        }
+      } else if (type === 'blue_star_burst') {
+        // 2. The "Tanzschein" (Dance Licence) Card & Stamp + Gazelle Mask in the center
+        const dx = Math.abs(x - 64);
+        const dy = Math.abs(y - 64);
+        
+        // Layer Gazelle mask in the center
+        const maskColor = drawCharacterMask('gazelle', x, y, time, beatProgress);
+        
+        if (maskColor.r > 0 || maskColor.g > 0 || maskColor.b > 0) {
+          r = maskColor.r; g = maskColor.g; b = maskColor.b;
+        } else {
+          // Draw the licence card border (40 x 60 rectangle)
+          const isBorder = (dx === 22 && dy <= 32) || (dy === 32 && dx <= 22);
+          if (isBorder) {
+            // Neon Magenta border
+            r = 255; g = 0; b = 150;
+          } else if (dx < 22 && dy < 32) {
+            // Inside the card, draw a pulsing stamp circle in the center
+            const dist = Math.sqrt((x-64)*(x-64) + (y-64)*(y-64));
+            const stampRadius = 5 + 12 * beatProgress;
+            if (Math.abs(dist - stampRadius) < 1.5) {
+              // Pulsing Neon Gold stamp
+              r = 235; g = 180; b = 45;
+            }
+            // Dim card background
+            else {
+              r = 10; g = 5; b = 20;
+            }
+          }
+        }
+
+        // Transition White Flash Impact at the drop entry (from 3.7s to 3.95s)
+        if (time >= 3.7 && time < 3.95) {
+          const flash = 1.0 - (time - 3.7) / 0.25;
+          r = Math.round(r * (1.0 - flash) + 255 * flash);
+          g = Math.round(g * (1.0 - flash) + 255 * flash);
+          b = Math.round(b * (1.0 - flash) + 255 * flash);
+        }
+      } else if (type === 'quadrant_flashes') {
+        // 3. Glowing neon gorilla mask in the center + flashing quadrants
+        const maskColor = drawCharacterMask('gorilla', x, y, time, beatProgress);
+        
+        if (maskColor.r > 0 || maskColor.g > 0 || maskColor.b > 0) {
+          r = maskColor.r; g = maskColor.g; b = maskColor.b;
+        } else {
+          // Quadrant controller flash (0: TL, 1: TR, 2: BL, 3: BR)
+          let pixelQuad = 0;
+          if (x < 64 && y >= 64) pixelQuad = 0;
+          else if (x >= 64 && y >= 64) pixelQuad = 1;
+          else if (x < 64 && y < 64) pixelQuad = 2;
+          else pixelQuad = 3;
+
+          if (pixelQuad === beatInMeasure) {
+            const decay = 1 - beatProgress;
+            r = Math.floor(255 * decay);
+            g = 0;
+            b = Math.floor(128 * decay); // Magenta flash
+          } else {
+            r = 0; g = 20; b = 30; // dim background
+          }
+        }
+      } else if (type === 'laser_sweeps') {
+        // 4. Rotating crossing laser tunnel + Lion Mask in the center (Pre-chorus)
+        const maskColor = drawCharacterMask('lion', x, y, time, beatProgress);
+        
+        if (maskColor.r > 0 || maskColor.g > 0 || maskColor.b > 0) {
+          r = maskColor.r; g = maskColor.g; b = maskColor.b;
+        } else {
+          const dx = x - 64;
+          const dy = y - 64;
+          const dist = Math.sqrt(dx*dx + dy*dy);
+          
+          const progress = Math.max(0, Math.min(1.0, (time - 18.5) / 7.3));
+          const angle = time * (3.0 + progress * 5.0); // accelerates rotation
+          
+          // Draw two crossing laser lines
+          const line1 = Math.abs(dx * Math.sin(angle) - dy * Math.cos(angle)) < 1.8;
+          const line2 = Math.abs(dx * Math.cos(angle) + dy * Math.sin(angle)) < 1.8;
+          
+          if (line1 || line2) {
+            // Alternating Cyan and Magenta lasers
+            if (Math.sin(time * 5) > 0) {
+              r = 0; g = 255; b = 255; // Cyan
+            } else {
+              r = 255; g = 0; b = 150; // Magenta
+            }
+          } else {
+            // Shrinking square tunnel trails
+            const maxDist = Math.max(Math.abs(dx), Math.abs(dy));
+            const trailSize = Math.floor((time * 40) % 64);
+            if (maxDist === trailSize) {
+              r = 30; g = 0; b = 40; // Dim purple trails
+            }
+          }
+          
+          // White strobe frame on the borders (flashes faster at the end of the buildup)
+          const isBorder = x < 4 || x > 123 || y < 4 || y > 123;
+          const strobeOn = Math.floor(time * (10 + progress * 30)) % 2 === 0;
+          if (isBorder && strobeOn) {
+            r = 255; g = 255; b = 255;
+          }
+        }
+      } else if (type === 'reactive_drop') {
+        // 5. Singer COSMÓ Face + Equalizer + Expanding Gold Star
+        const maskColor = drawCharacterMask('cosmo', x, y, time, beatProgress);
+        
+        if (maskColor.r > 0 || maskColor.g > 0 || maskColor.b > 0) {
+          r = maskColor.r; g = maskColor.g; b = maskColor.b;
+        } else {
+          const dx = x - 64;
+          const dy = y - 64;
+          const dist = Math.sqrt(dx*dx + dy*dy);
+          
+          // A. Background strobe wash
+          const strobeWashOn = beatIdx % 2 === 0;
+          if (strobeWashOn) {
+            r = 0; g = 20; b = 40; // Deep Cyan wash
+          } else {
+            r = 25; g = 0; b = 15; // Deep Magenta wash
+          }
+
+          // B. Equalizer bars (16 columns) reacting to the Kick
+          const colIdx = Math.floor(x / 8);
+          const bounce = Math.exp(-beatProgress * 4.0);
+          const baseHeight = (Math.sin(colIdx * 0.7 + time * 12) * 0.3 + 0.7) * 45;
+          const targetHeight = 15 + baseHeight * (0.4 + 0.6 * bounce);
+          
+          if (y < targetHeight) {
+            if (y < 30) {
+              r = 255; g = 0; b = 150; // Neon Pink
+            } else if (y < 50) {
+              r = 0; g = 255; b = 255; // Neon Cyan
+            } else {
+              r = 245; g = 245; b = 255; // Silver/White
+            }
+          }
+          
+          // C. Concentric Gold Star Burst (Eurovision star motif!)
+          const burstProgress = beatProgress; // expands every beat
+          const burstRadius = burstProgress * 85;
+          const angle = Math.atan2(dy, dx);
+          
+          const starFactor = Math.abs(Math.sin(angle * 4));
+          const starRadius = burstRadius * (0.7 + 0.3 * starFactor);
+          
+          if (Math.abs(dist - starRadius) < 3.0) {
+            r = 235; g = 180; b = 45; // Neon Gold star outline
+          }
+
+          // D. Full-screen Clap Flash (first 50ms of beats 1 and 3 of the measure)
+          if (beatProgress < 0.12 && (beatInMeasure === 1 || beatInMeasure === 3)) {
+            r = 255; g = 255; b = 255;
+          }
+        }
+      }
+
+      // EXTRA: Draw expanding shockwave circles of white sparkles on analyzed audio beat hits
+      if (isAudioImpact && type !== 'black') {
         const dx = x - 64;
         const dy = y - 64;
         const dist = Math.sqrt(dx * dx + dy * dy);
-        const val = Math.sin(dist * 0.15 - time * 6);
-        if (val > 0.15) {
-          r = 230; g = 20; b = 30; // Red
-        } else {
-          r = 240; g = 240; b = 240; // White
-        }
-      } else if (type === 'gradient_sweep') {
-        const sweepPos = (x + y - time * 120) % 256;
-        if (sweepPos < 80) {
-          r = 230; g = 20; b = 30;
-        } else if (sweepPos < 160) {
-          r = 240; g = 240; b = 240;
-        } else {
-          r = 235; g = 180; b = 45; // Gold
-        }
-      } else if (type === 'strobe_flash') {
-        const flashIdx = Math.floor(time * 12) % 3;
-        if (flashIdx === 0) {
-          r = 230; g = 20; b = 30;
-        } else if (flashIdx === 1) {
-          r = 240; g = 240; b = 240;
-        }
-      } else if (type === 'equalizer') {
-        const speedFactor = time * 5;
-        const bandValue = Math.abs(Math.sin(x * 0.1 + speedFactor)) * 90 + Math.cos(x * 0.05 - speedFactor) * 30;
-        const limit = Math.max(0, Math.min(128, bandValue));
-        if (y < limit) {
-          if (y < 50) { r = 230; g = 20; b = 30; }
-          else if (y < 95) { r = 235; g = 180; b = 45; }
-          else { r = 240; g = 240; b = 240; }
+        // Rings of particles that flash on drums
+        if (dist > 52 && dist < 58 && Math.random() > 0.35) {
+          r = 255; g = 255; b = 255; // Sparkling white impact halo!
         }
       }
 
@@ -286,7 +483,13 @@ function evaluateWallBlock(type: string, time: number) {
   }
 }
 
-function evaluateLyresBlock(type: string, time: number) {
+function evaluateLyresBlock(type: string, time: number, isAudioImpact: boolean = false) {
+  const adjustedTime = time + AUDIO_OFFSET;
+  const beatIdx = Math.floor(adjustedTime / BEAT_DURATION);
+  const beatProgress = (adjustedTime % BEAT_DURATION) / BEAT_DURATION;
+  const measureIdx = Math.floor(beatIdx / 4);
+  const beatInMeasure = beatIdx % 4;
+
   for (let l = 0; l < 4; l++) {
     const baseId = 34000 + (l + 1) * 100;
     
@@ -296,23 +499,64 @@ function evaluateLyresBlock(type: string, time: number) {
     let strobe = 0;
     let colorCh = 0;
 
-    if (type === 'lyre_waltz') {
-      const phase = time * 1.5 + l * (Math.PI / 2);
-      pan = Math.round(127 + 60 * Math.sin(phase));
-      tilt = Math.round(100 + 40 * Math.cos(phase));
-      colorCh = 135; // Gold
-    } else if (type === 'lyre_rise') {
-      tilt = Math.round(180 + 40 * Math.sin(time * 3));
-      colorCh = 15; // Red
-    } else if (type === 'lyre_trap') {
-      const sweepPhase = time * 5 + (l % 2 === 0 ? 0 : Math.PI);
-      pan = Math.round(127 + 100 * Math.sin(sweepPhase));
-      tilt = Math.round(127 + 60 * Math.cos(sweepPhase));
-      strobe = 240;
-      const colors = [15, 135, 0, 15];
-      colorCh = colors[(l + Math.floor(time * 2)) % colors.length];
+    if (type === 'lyre_intro') {
+      // Slow panning sweeps, silver-white
+      const phase = time * 0.5 + l;
+      pan = Math.round(127 + 35 * Math.sin(phase));
+      tilt = 180; // Pointing upwards
+      dimmer = 80;
+      colorCh = 15; // Silver/White
+    } else if (type === 'lyre_kick_pulse') {
+      // Snap to positions on beats 0 and 2
+      const snapPos = Math.floor(beatIdx / 2) % 4;
+      const positions = [50, 100, 150, 200];
+      pan = positions[(snapPos + l) % 4];
+      tilt = 120;
+      // Pulse dimmer on every beat
+      dimmer = Math.round(255 * Math.exp(-beatProgress * 3.0));
+      colorCh = 100; // Blue/Cyan
+    } else if (type === 'lyre_circle_color') {
+      // Fast circular waltz
+      const phase = time * 3.0 + l * (Math.PI / 2);
+      pan = Math.round(127 + 50 * Math.sin(phase));
+      tilt = Math.round(120 + 30 * Math.cos(phase));
+      dimmer = 255;
+      // Alternate colors on every beat
+      const colors = [15, 100, 150, 180];
+      colorCh = colors[beatIdx % colors.length];
+    } else if (type === 'lyre_buildup_strobe') {
+      // Raise beams to ceiling
+      pan = 127;
+      const progress = Math.max(0, Math.min(1.0, (time - 18.5) / 7.3));
+      tilt = Math.round(120 + progress * 100);
+      dimmer = 255;
+      // Accelerate strobe
+      strobe = Math.round(50 + progress * 200);
+      colorCh = 15; // White
+    } else if (type === 'lyre_drop_trap') {
+      // Fast mirrored chases
+      const sweepPhase = time * 6 + (l % 2 === 0 ? 0 : Math.PI);
+      pan = Math.round(127 + 90 * Math.sin(sweepPhase));
+      tilt = Math.round(140 + 40 * Math.cos(sweepPhase));
+      dimmer = 255;
+      strobe = 240; // Fast strobe
+      // Alternate Magenta and Blue on beats
+      colorCh = beatIdx % 2 === 0 ? 180 : 100;
     } else if (type === 'black') {
       dimmer = 0;
+    }
+
+    // Transition Flash at 3.7s (Drop entry)
+    if (time >= 3.7 && time < 3.95) {
+      dimmer = 255;
+      strobe = 250; // violent strobe
+      colorCh = 15; // White
+    }
+
+    // EXTRA: Audio impact accents (flash white + strobe) on drums
+    if (isAudioImpact && type !== 'black') {
+      dimmer = 255;
+      strobe = Math.max(strobe, 245);
     }
 
     // Map channels to buffers
@@ -328,7 +572,222 @@ function evaluateLyresBlock(type: string, time: number) {
   }
 }
 
+function evaluateStaticBlock(type: string, time: number, isAudioImpact: boolean = false) {
+  const adjustedTime = time + AUDIO_OFFSET;
+  const beatIdx = Math.floor(adjustedTime / BEAT_DURATION);
+  const beatProgress = (adjustedTime % BEAT_DURATION) / BEAT_DURATION;
+  const measureIdx = Math.floor(beatIdx / 4);
+  const beatInMeasure = beatIdx % 4;
+
+  let r = 0, g = 0, b = 0, w = 0;
+
+  if (type === 'static_off') {
+    r = g = b = w = 0;
+  } else if (type === 'static_measure_pulse') {
+    // Pulse Blue on beat 0 of every measure
+    if (beatInMeasure === 0) {
+      const intensity = Math.floor(255 * Math.exp(-beatProgress * 3.0));
+      b = intensity;
+    }
+  } else if (type === 'static_snare_flash') {
+    // Flash Magenta on beats 1 and 3 of every measure
+    if (beatInMeasure === 1 || beatInMeasure === 3) {
+      const intensity = Math.floor(255 * Math.exp(-beatProgress * 4.0));
+      r = intensity;
+      b = Math.floor(intensity * 0.5);
+    }
+  } else if (type === 'static_dimmer_rise') {
+    // Rise white dimmer
+    const progress = Math.max(0, Math.min(1.0, (time - 18.5) / 7.3));
+    w = Math.floor(progress * 255);
+  } else if (type === 'static_drop_strobe') {
+    // Strobe flash
+    const isStrobeOn = Math.floor(time * 30) % 2 === 0;
+    if (isStrobeOn) {
+      if (beatInMeasure === 0 || beatInMeasure === 2) {
+        // Gold
+        r = 235; g = 180; b = 45;
+      } else {
+        // White
+        w = 255;
+      }
+    }
+  }
+
+  // Transition Flash at 3.7s (Drop entry)
+  if (time >= 3.7 && time < 3.95) {
+    w = 255;
+    r = 255;
+    g = 255;
+    b = 255; // Blinding white static spotlight
+  }
+
+  // EXTRA: Spotlight absolute white flash accent on audio beat hits
+  if (isAudioImpact && type !== 'static_off') {
+    w = 255; // White blast!
+  }
+
+  // Write values to entity IDs 33001 to 33004
+  const ids = [33001, 33002, 33003, 33004];
+  const values = [r, g, b, w];
+  
+  ids.forEach((id, idx) => {
+    const target = activeConfig.entityMap[id];
+    if (target) {
+      const buf = getUniverseBuffer(target.universe);
+      buf[target.channel] = values[idx];
+      dirtyUniverses.add(target.universe);
+    }
+  });
+}
+
+// Character Masks Pixel Art Rendering Engine (Eurovision 2026 "Tanzschein" inspired)
+function drawCharacterMask(type: string, x: number, y: number, time: number, beatProgress: number) {
+  let r = 0, g = 0, b = 0;
+  
+  const dx = x - 64;
+  const dy = y - 64;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const angle = Math.atan2(dy, dx);
+  
+  const bounce = Math.exp(-beatProgress * 4.0);
+
+  if (type === 'cosmo') {
+    // Singer COSMÓ: Oval Face + Blue Star painted over his right eye
+    const inFace = (dx * dx) / (25 * 25) + (dy * dy) / (34 * 34) < 1.0;
+    const inHair = dy > 22 && Math.abs(dx) < 28 && Math.sin(x * 0.4) * 3 + 28 > dy;
+    
+    // Right Eye Star Paint (center: x=64+9, y=64+6)
+    const starDx = dx - 9;
+    const starDy = dy - 6;
+    const starDist = Math.sqrt(starDx * starDx + starDy * starDy);
+    const starAngle = Math.atan2(starDy, starDx);
+    
+    const starFactor = Math.abs(Math.sin(starAngle * 2.5)); // 5-pointed star
+    const starRadius = (5 + 7 * bounce) * (0.65 + 0.35 * starFactor);
+    const inStar = starDist < starRadius;
+
+    // Left Eye (open slit)
+    const inLeftEye = Math.sqrt((dx + 9)*(dx + 9) + (dy - 6)*(dy - 6)) < 2.5;
+
+    // Mouth (smiling)
+    const inMouth = Math.abs(dy + 15) < 1.5 && Math.abs(dx) < 8;
+
+    if (inStar) {
+      r = 0; g = 110; b = 255; // Electric Blue Star Eye Paint!
+    } else if (inLeftEye) {
+      r = 255; g = 255; b = 255; // White left eye
+    } else if (inMouth) {
+      r = 220; g = 20; b = 40; // Red mouth
+    } else if (inHair) {
+      r = 35; g = 25; b = 20; // Dark curly hair
+    } else if (inFace) {
+      r = 240; g = 190; b = 160; // Skin tone
+    }
+  } 
+  else if (type === 'gazelle') {
+    // Gazelle Mask: Elongated triangular metallic mask + long vertical horns
+    const inFace = dy < 12 && dy > -30 && Math.abs(dx) < (14 - dy * 0.4);
+    
+    // Ears pointing outward
+    const inLeftEar = dx < -12 && dx > -32 && dy > -4 && dy < 4 && Math.abs(dy - (dx + 12)*0.25) < 2.5;
+    const inRightEar = dx > 12 && dx < 32 && dy > -4 && dy < 4 && Math.abs(dy - (-dx + 12)*0.25) < 2.5;
+
+    // Curved long horns going up
+    const leftHornX = -7 - (dy - 12) * 0.25 + Math.sin(dy * 0.12) * 2;
+    const isLeftHorn = dy >= 12 && dy <= 52 && Math.abs(dx - leftHornX) < (2.5 - (dy - 12) * 0.04);
+
+    const rightHornX = 7 + (dy - 12) * 0.25 - Math.sin(dy * 0.12) * 2;
+    const isRightHorn = dy >= 12 && dy <= 52 && Math.abs(dx - rightHornX) < (2.5 - (dy - 12) * 0.04);
+
+    if (isLeftHorn || isRightHorn) {
+      r = 0; g = 240; b = 255; // Glowing Neon Cyan Horns
+    } else if (inFace || inLeftEar || inRightEar) {
+      r = 180; g = 185; b = 195; // Silver mask body
+      
+      // Cyan glowing slit eyes
+      const eyeL = Math.sqrt((dx + 5)*(dx + 5) + (dy - 2)*(dy - 2)) < 2.0;
+      const eyeR = Math.sqrt((dx - 5)*(dx - 5) + (dy - 2)*(dy - 2)) < 2.0;
+      if (eyeL || eyeR) {
+        r = 0; g = 255; b = 255;
+      }
+    }
+  } 
+  else if (type === 'gorilla') {
+    // Gorilla Mask: Heavy square metallic head + glowing red details
+    const inHead = Math.abs(dx) < 26 && dy < 26 && dy > -28;
+    
+    const isBrow = dy >= 8 && dy <= 14 && Math.abs(dx) < 22;
+    const isMuzzle = dy <= -6 && dy >= -22 && Math.abs(dx) < 18;
+
+    if (isBrow || isMuzzle) {
+      // Glowing neon green highlights on brow & jaw
+      const pulseColor = Math.floor(180 + 75 * bounce);
+      r = 0; g = pulseColor; b = 110;
+    } else if (inHead) {
+      r = 135; g = 140; b = 150; // Dark Silver gorilla head
+      
+      // Glowing red eyes
+      const eyeL = Math.sqrt((dx + 7)*(dx + 7) + (dy - 3)*(dy - 3)) < 3.0;
+      const eyeR = Math.sqrt((dx - 7)*(dx - 7) + (dy - 3)*(dy - 3)) < 3.0;
+      if (eyeL || eyeR) {
+        r = 255; g = 0; b = 0; // Red eyes
+      }
+    }
+  } 
+  else if (type === 'lion') {
+    // Lion Mask: Majestic glowing orange mane surrounding cat face shield
+    const maneRadius = 36 + 6 * bounce;
+    const isMane = dist < maneRadius && dist > 24 && Math.floor(angle * 10) % 2 === 0;
+    const inFace = dist <= 24 && dy > -24;
+    
+    if (isMane) {
+      r = 255; g = 130; b = 0; // Majestic Glowing Neon Gold/Orange Mane
+    } else if (inFace) {
+      r = 200; g = 200; b = 210; // Silver face plate
+      
+      // Eyes
+      const eyeL = Math.abs(dy - 3) < 1.2 && dx < -4 && dx > -11;
+      const eyeR = Math.abs(dy - 3) < 1.2 && dx > 4 && dx < 11;
+      const inSnout = dy < -4 && dy > -14 && Math.abs(dx) < 7;
+
+      if (eyeL || eyeR) {
+        r = 255; g = 180; b = 0; // Glowing gold eyes
+      } else if (inSnout) {
+        r = 45; g = 45; b = 55; // Snout
+      }
+    }
+  }
+
+  return { r, g, b };
+}
+
 function applyInteractiveOverrides(key: string, time: number) {
+  if (key === 'c' || key === 'g' || key === 'm' || key === 'n') {
+    const maskType = key === 'c' ? 'cosmo' : key === 'g' ? 'gazelle' : key === 'm' ? 'gorilla' : 'lion';
+    const adjustedTime = time + AUDIO_OFFSET;
+    const beatProgress = (adjustedTime % BEAT_DURATION) / BEAT_DURATION;
+
+    for (let x = 0; x < 128; x++) {
+      for (let y = 0; y < 128; y++) {
+        const id = getEntityIdFromGrid(x, y);
+        const target = activeConfig.entityMap[id];
+        if (!target) continue;
+
+        const color = drawCharacterMask(maskType, x, y, time, beatProgress);
+        // Layer the pixel art on top of background by keeping background pixels where mask is black
+        if (color.r > 0 || color.g > 0 || color.b > 0) {
+          const buf = getUniverseBuffer(target.universe);
+          buf[target.channel] = color.r;
+          buf[target.channel + 1] = color.g;
+          buf[target.channel + 2] = color.b;
+          dirtyUniverses.add(target.universe);
+        }
+      }
+    }
+    return;
+  }
+
   if (key === 'space' || key === 'a') {
     for (let x = 0; x < 128; x++) {
       for (let y = 0; y < 128; y++) {
@@ -510,6 +969,7 @@ const ehubReceiver = new EHubReceiver(
 
     if (!isPlaying) {
       isPlaying = true;
+      playbackStartRealTime = Date.now() - playbackTime * 1000;
       updateRouterState();
     }
   },
@@ -529,9 +989,14 @@ wss.on('connection', (ws) => {
     try {
       const msg = JSON.parse(message.toString());
 
-      if (msg.type === 'play') {
+      if (msg.type === 'set-beats') {
+        detectedBeats = msg.beats;
+        console.log(`[Audio] Received ${detectedBeats.length} beat timestamps from client.`);
+        broadcastToClients({ type: 'log', message: `Synchronized ${detectedBeats.length} beat triggers with server.` });
+      } else if (msg.type === 'play') {
         activeTestPattern = null;
         isPlaying = true;
+        playbackStartRealTime = Date.now() - playbackTime * 1000;
         updateRouterState();
       } else if (msg.type === 'stop') {
         activeTestPattern = null;
