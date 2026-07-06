@@ -702,25 +702,56 @@ export default function App() {
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 {config.controllers.map((ctrl: any, i: number) => (
-                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', backgroundColor: 'var(--bg-base)', borderRadius: '8px', border: '1px solid var(--border-accent)' }}>
-                    <div>
+                  <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '16px', backgroundColor: 'var(--bg-base)', borderRadius: '8px', border: '1px solid var(--border-accent)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontSize: '0.95rem', fontWeight: '600', fontFamily: 'JetBrains Mono' }}>{ctrl.ip}</span>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block' }}>
-                        Universes: {ctrl.universes.length} ({ctrl.universes.join(', ')})
-                      </span>
+                      <button
+                        style={{ backgroundColor: 'transparent', color: '#ef4444', padding: '4px', border: 'none', cursor: 'pointer' }}
+                        onClick={() => {
+                          setConfig((prev: any) => ({
+                            ...prev,
+                            controllers: prev.controllers.filter((_: any, idx: number) => idx !== i)
+                          }));
+                          addLog(`Removed controller ${ctrl.ip}`);
+                        }}
+                      >
+                        <Trash2 size={16} />
+                      </button>
                     </div>
-                    <button
-                      style={{ backgroundColor: 'transparent', color: '#ef4444', padding: '4px', border: 'none' }}
-                      onClick={() => {
-                        setConfig((prev: any) => ({
-                          ...prev,
-                          controllers: prev.controllers.filter((_: any, idx: number) => idx !== i)
-                        }));
-                        addLog(`Removed controller ${ctrl.ip}`);
-                      }}
-                    >
-                      <Trash2 size={16} />
-                    </button>
+                    
+                    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: '12px', alignItems: 'center' }}>
+                      <div>
+                        <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Universes</label>
+                        <span style={{ fontSize: '0.75rem', fontFamily: 'JetBrains Mono', color: 'var(--text-muted)' }}>
+                          {ctrl.universes.length} ({ctrl.universes[0]}..{ctrl.universes[ctrl.universes.length - 1]})
+                        </span>
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>ArtNet Offset</label>
+                        <input
+                          type="number"
+                          value={ctrl.startUniverse ?? 0}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value) || 0;
+                            setConfig((prev: any) => {
+                              const updated = [...prev.controllers];
+                              updated[i] = { ...updated[i], startUniverse: val };
+                              return { ...prev, controllers: updated };
+                            });
+                          }}
+                          style={{
+                            width: '80px',
+                            padding: '4px 8px',
+                            backgroundColor: 'var(--bg-card)',
+                            border: '1px solid var(--border-muted)',
+                            borderRadius: '4px',
+                            color: 'var(--text-primary)',
+                            fontFamily: 'JetBrains Mono',
+                            fontSize: '0.8rem'
+                          }}
+                        />
+                      </div>
+                    </div>
                   </div>
                 ))}
               </div>
