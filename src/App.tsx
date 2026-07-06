@@ -15,7 +15,7 @@ interface TimelineBlock {
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'timeline' | 'config'>('dashboard');
   const [wsConnected, setWsConnected] = useState(false);
-  const [telemetry, setTelemetry] = useState({ fps: 0, packetsPerSec: 0, kbps: 0, ehubPacketsPerSec: 0 });
+  const [telemetry, setTelemetry] = useState<any>({ fps: 0, packetsPerSec: 0, kbps: 0, ehubPacketsPerSec: 0 });
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [consoleLogs, setConsoleLogs] = useState<string[]>(['System initialized. Austrian theme selected.']);
@@ -67,6 +67,8 @@ export default function App() {
         } else if (msg.type === 'clear') {
           setFrameState({});
           setCurrentTime(0);
+        } else if (msg.type === 'log') {
+          addLog(`[SERVER] ${msg.message}`);
         }
       } catch (e) {
         console.error(e);
@@ -289,32 +291,116 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Interactivity Keybinds */}
+              {/* Live Overrides - Clickable buttons + keyboard */}
               <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <h3 style={{ fontSize: '1.1rem', color: 'var(--text-primary)' }}>Live Keyboard Overrides (P6)</h3>
-                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                  Press and hold keys to inject live triggers:
+                <h3 style={{ fontSize: '1.1rem', color: 'var(--text-primary)' }}>Live Overrides (P6)</h3>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  Clique ou maintiens la touche clavier. Fonctionne SANS lancer le show.
                 </p>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', backgroundColor: 'var(--bg-base)', borderRadius: '6px' }}>
-                    <span>[SPACEBAR] Austrian Flag Cross</span>
-                    <span className={`badge ${interactiveOverride === 'space' ? 'badge-red' : 'secondary'}`}>
-                      {interactiveOverride === 'space' ? 'ACTIVE' : 'READY'}
-                    </span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', backgroundColor: 'var(--bg-base)', borderRadius: '6px' }}>
-                    <span>[A] Hail of Imperial Gold Sparkles</span>
-                    <span className={`badge ${interactiveOverride === 'a' ? 'badge-gold' : 'secondary'}`}>
-                      {interactiveOverride === 'a' ? 'ACTIVE' : 'READY'}
-                    </span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', backgroundColor: 'var(--bg-base)', borderRadius: '6px' }}>
-                    <span>[L] Lyres Sky Strobe Chase</span>
-                    <span className={`badge ${interactiveOverride === 'l' ? 'badge-cyan' : 'secondary'}`}>
-                      {interactiveOverride === 'l' ? 'ACTIVE' : 'READY'}
-                    </span>
-                  </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {[
+                    { key: 'space', label: '⬜ Austrian Flag Cross', color: 'badge-red', kbd: 'ESPACE' },
+                    { key: 'a', label: '✨ Gold Imperial Sparkles', color: 'badge-gold', kbd: 'A' },
+                    { key: 'l', label: '💡 Lyres Sky Strobe', color: 'badge-cyan', kbd: 'L' },
+                  ].map(({ key, label, color, kbd }) => (
+                    <button
+                      key={key}
+                      onMouseDown={() => {
+                        setInteractiveOverride(key);
+                        addLog(`Override ACTIVATED: ${key.toUpperCase()}`);
+                        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                          wsRef.current.send(JSON.stringify({ type: 'override', key }));
+                        }
+                      }}
+                      onMouseUp={() => {
+                        setInteractiveOverride(null);
+                        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                          wsRef.current.send(JSON.stringify({ type: 'override', key: null }));
+                        }
+                      }}
+                      onMouseLeave={() => {
+                        if (interactiveOverride === key) {
+                          setInteractiveOverride(null);
+                          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                            wsRef.current.send(JSON.stringify({ type: 'override', key: null }));
+                          }
+                        }
+                      }}
+                      style={{
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                        padding: '10px 14px', backgroundColor: interactiveOverride === key ? 'rgba(230,20,30,0.15)' : 'var(--bg-base)',
+                        borderRadius: '6px', border: interactiveOverride === key ? '1px solid var(--color-red)' : '1px solid var(--border-muted)',
+                        cursor: 'pointer', width: '100%', textAlign: 'left',
+                      }}
+                    >
+                      <span style={{ fontSize: '0.9rem' }}>[{kbd}] {label}</span>
+                      <span className={`badge ${interactiveOverride === key ? color : 'secondary'}`}>
+                        {interactiveOverride === key ? 'ACTIVE' : 'READY'}
+                      </span>
+                    </button>
+                  ))}
                 </div>
+              </div>
+
+              {/* Diagnostic Panel */}
+              <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <h3 style={{ fontSize: '1.1rem', color: 'var(--text-primary)' }}>🔧 Diagnostic Réseau</h3>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button
+                    onClick={() => {
+                      addLog('Sending TEST ALL controllers...');
+                      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                        wsRef.current.send(JSON.stringify({ type: 'test-all' }));
+                      }
+                    }}
+                    style={{ backgroundColor: 'hsl(260, 60%, 45%)', fontSize: '0.8rem', padding: '8px 14px' }}
+                  >
+                    🎨 Test ALL (R/G/B/Y)
+                  </button>
+                  {(config?.controllers || []).map((ctrl: any, i: number) => {
+                    const colors = ['#ef4444', '#22c55e', '#3b82f6', '#eab308'];
+                    const labels = ['RED', 'GREEN', 'BLUE', 'YELLOW'];
+                    return (
+                      <button
+                        key={i}
+                        onClick={() => {
+                          const colorMap = [[255,0,0],[0,255,0],[0,0,255],[255,255,0]];
+                          addLog(`Testing controller ${ctrl.ip} (${labels[i]})...`);
+                          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                            wsRef.current.send(JSON.stringify({ type: 'test-controller', controllerIdx: i, color: colorMap[i] }));
+                          }
+                        }}
+                        style={{ backgroundColor: colors[i], color: i === 3 ? '#000' : '#fff', fontSize: '0.75rem', padding: '6px 10px' }}
+                      >
+                        {ctrl.ip}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Per-IP packet counts */}
+                {telemetry.packetCountPerIp && (
+                  <div style={{ fontSize: '0.8rem', fontFamily: 'JetBrains Mono', backgroundColor: 'var(--bg-base)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-muted)' }}>
+                    <div style={{ marginBottom: '6px', color: 'var(--text-secondary)', fontSize: '0.7rem', textTransform: 'uppercase' }}>Packets envoyés par contrôleur (total)</div>
+                    {Object.entries(telemetry.packetCountPerIp).length === 0 ? (
+                      <div style={{ color: 'var(--text-muted)' }}>Aucun paquet envoyé</div>
+                    ) : (
+                      Object.entries(telemetry.packetCountPerIp).map(([ip, count]) => (
+                        <div key={ip} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
+                          <span style={{ color: 'var(--text-primary)' }}>{ip}</span>
+                          <span style={{ color: (count as number) > 0 ? '#22c55e' : '#ef4444' }}>{String(count)} pkts</span>
+                        </div>
+                      ))
+                    )}
+                    <div style={{ marginTop: '6px', borderTop: '1px solid var(--border-muted)', paddingTop: '6px', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                      Loop: {telemetry.loopRunning ? '✅ Running' : '❌ Stopped'}
+                      {' | '}
+                      Override: {telemetry.activeOverride || 'none'}
+                      {' | '}
+                      Playing: {telemetry.isPlaying ? 'Yes' : 'No'}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Console log */}

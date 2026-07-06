@@ -409,11 +409,19 @@ setInterval(() => {
   const now = Date.now();
   const dt = (now - lastStatsTime) / 1000;
   if (dt > 0) {
+    // Convert per-IP packet counts to object
+    const ipCounts: Record<string, number> = {};
+    packetCountPerIp.forEach((count, ip) => { ipCounts[ip] = count; });
+
     currentTelemetry = {
       fps: Math.round(stats.framesProcessed / dt),
       packetsPerSec: Math.round(stats.packetsSent / dt),
       kbps: Math.round((stats.bytesSent * 8) / 1024 / dt),
       ehubPacketsPerSec: Math.round(stats.ehubPacketsReceived / dt),
+      packetCountPerIp: ipCounts,
+      activeOverride,
+      isPlaying,
+      loopRunning: routeInterval !== null,
     };
     stats.framesProcessed = 0;
     stats.packetsSent = 0;
@@ -501,7 +509,50 @@ wss.on('connection', (ws) => {
         updateRouterState();
       } else if (msg.type === 'override') {
         activeOverride = msg.key;
+        console.log(`[Override] ${msg.key ? 'ACTIVATED: ' + msg.key : 'RELEASED'} | isPlaying=${isPlaying} | loopRunning=${routeInterval !== null}`);
         updateRouterState();
+        console.log(`[Override] After updateRouterState: loopRunning=${routeInterval !== null}`);
+      } else if (msg.type === 'test-controller') {
+        // Send a solid color to a specific controller to test connectivity
+        const { controllerIdx, color } = msg;
+        const ctrl = activeConfig.controllers[controllerIdx];
+        if (ctrl) {
+          console.log(`[Test] Sending ${color} to controller ${ctrl.ip} (${ctrl.universes.length} universes, startUniverse=${ctrl.startUniverse ?? 0})`);
+          const [r, g, b] = color;
+          const offset = ctrl.startUniverse ?? 0;
+          // Fill all universes for this controller
+          ctrl.universes.forEach((univ) => {
+            const buf = getUniverseBuffer(univ);
+            // Write solid color to first 510 channels (170 RGB LEDs)
+            for (let ch = 0; ch < 510; ch += 3) {
+              buf[ch] = r; buf[ch + 1] = g; buf[ch + 2] = b;
+            }
+            const artnetUniv = univ - offset;
+            artnetSender.send(artnetUniv, buf, { ip: ctrl.ip });
+            console.log(`  Sent universe ${univ} -> ArtNet ${artnetUniv} to ${ctrl.ip}`);
+          });
+          // Send preview
+          sendPreviewToClients();
+          broadcastToClients({ type: 'log', message: `Test sent to ${ctrl.ip}: ${ctrl.universes.length} universes (ArtNet ${0}-${ctrl.universes.length - 1})` });
+        }
+      } else if (msg.type === 'test-all') {
+        // Send distinct colors to each controller quadrant
+        const colors = [[255,0,0],[0,255,0],[0,0,255],[255,255,0]];
+        console.log('[Test] Sending test pattern to ALL controllers...');
+        activeConfig.controllers.forEach((ctrl, idx) => {
+          const [r, g, b] = colors[idx] || [128,128,128];
+          const offset = ctrl.startUniverse ?? 0;
+          ctrl.universes.forEach((univ) => {
+            const buf = getUniverseBuffer(univ);
+            for (let ch = 0; ch < 510; ch += 3) {
+              buf[ch] = r; buf[ch + 1] = g; buf[ch + 2] = b;
+            }
+            artnetSender.send(univ - offset, buf, { ip: ctrl.ip });
+          });
+          console.log(`  Controller ${ctrl.ip}: ${colors[idx]} -> ArtNet [0..${ctrl.universes.length - 1}]`);
+        });
+        sendPreviewToClients();
+        broadcastToClients({ type: 'log', message: 'Test ALL: RED=.45, GREEN=.46, BLUE=.47, YELLOW=.48' });
       }
     } catch (e) {
       console.error('Error handling WebSocket message:', e);
