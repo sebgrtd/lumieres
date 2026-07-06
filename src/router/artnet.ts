@@ -13,19 +13,20 @@ export interface ArtNetTarget {
 
 export class ArtNetSender {
   private socket: dgram.Socket;
-  // Cache of pre-allocated buffers for each universe to avoid allocations
-  private buffers: Map<number, Buffer> = new Map();
-  private sequences: Map<number, number> = new Map();
+  // Cache of pre-allocated buffers per controller/universe to avoid allocations and async overwrites
+  private buffers: Map<string, Buffer> = new Map();
+  private sequences: Map<string, number> = new Map();
 
   constructor() {
     this.socket = dgram.createSocket('udp4');
   }
 
   /**
-   * Get or create a pre-allocated buffer for a specific universe with a given DMX length.
+   * Get or create a pre-allocated buffer for a specific universe and target IP with a given DMX length.
    */
-  private getOrCreateBuffer(universe: number, dataLength: number): Buffer {
-    let buf = this.buffers.get(universe);
+  private getOrCreateBuffer(ip: string, universe: number, dataLength: number): Buffer {
+    const key = `${ip}:${universe}`;
+    let buf = this.buffers.get(key);
     // Ensure length is even as per ArtNet specifications
     const roundedLength = dataLength % 2 !== 0 ? dataLength + 1 : dataLength;
     const packetSize = 18 + roundedLength;
@@ -47,7 +48,7 @@ export class ArtNetSender {
       // Data length (Bytes 16-17, big-endian)
       buf.writeUInt16BE(roundedLength, 16);
 
-      this.buffers.set(universe, buf);
+      this.buffers.set(key, buf);
     }
     return buf;
   }
@@ -62,12 +63,16 @@ export class ArtNetSender {
       return;
     }
 
-    const buf = this.getOrCreateBuffer(universe, dataLen);
+    const targetIP = target.ip;
+    const targetPort = target.port || ARTNET_PORT;
+    const key = `${targetIP}:${universe}`;
+
+    const buf = this.getOrCreateBuffer(targetIP, universe, dataLen);
     
     // Update sequence number (Byte 12, 1-255)
-    let seq = (this.sequences.get(universe) || 0) + 1;
+    let seq = (this.sequences.get(key) || 0) + 1;
     if (seq > 255) seq = 1;
-    this.sequences.set(universe, seq);
+    this.sequences.set(key, seq);
     buf.writeUInt8(seq, 12);
 
     // Copy DMX data into the buffer payload section (starts at offset 18)
@@ -78,9 +83,6 @@ export class ArtNetSender {
     if (dataLen % 2 !== 0) {
       buf.writeUInt8(0, 18 + dataLen);
     }
-
-    const targetIP = target.ip;
-    const targetPort = target.port || ARTNET_PORT;
 
     this.socket.send(buf, 0, buf.length, targetPort, targetIP, (err) => {
       if (err) {
