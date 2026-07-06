@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, Square, Radio, Cpu, Settings, Activity, Trash2, Plus, Volume2 } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Play, Pause, Square, Radio, Cpu, Settings, Activity, Trash2, Plus, Palette } from 'lucide-react';
 import { Visualizer } from './components/Visualizer.tsx';
 import { synthInstance } from './components/AudioEngine.ts';
+import { PixelArtStudio } from './components/PixelArtStudio.tsx';
+import { createBlankPixelArt, type PixelArtFrame } from './types/pixelArt.ts';
 
 interface TimelineBlock {
   id: string;
@@ -13,13 +15,15 @@ interface TimelineBlock {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'timeline' | 'config'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'timeline' | 'pixelart' | 'config'>('dashboard');
   const [wsConnected, setWsConnected] = useState(false);
   const [telemetry, setTelemetry] = useState<any>({ fps: 0, packetsPerSec: 0, kbps: 0, ehubPacketsPerSec: 0 });
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [consoleLogs, setConsoleLogs] = useState<string[]>(['System initialized. Austrian theme selected.']);
   const [config, setConfig] = useState<any>(null);
+  const [pixelArt, setPixelArt] = useState<PixelArtFrame>(createBlankPixelArt());
+  const [pixelArtDirty, setPixelArtDirty] = useState(false);
 
   // Read-only visual tracks representation in UI
   const [blocks, setBlocks] = useState<TimelineBlock[]>([
@@ -43,6 +47,43 @@ export default function App() {
 
   const addLog = (msg: string) => {
     setConsoleLogs((prev) => [ `[${new Date().toLocaleTimeString()}] ${msg}`, ...prev.slice(0, 15) ]);
+  };
+
+  const sendWsMessage = (payload: unknown) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(payload));
+      return true;
+    }
+    return false;
+  };
+
+  const clearPixelArtLiveMode = (reason: string) => {
+    if (sendWsMessage({ type: 'hide-pixel-art' })) {
+      addLog(reason);
+    }
+  };
+
+  const savePixelArtDraft = () => {
+    const sent = sendWsMessage({ type: 'set-pixel-art', data: pixelArt });
+    if (sent) {
+      setPixelArtDirty(false);
+      addLog('Pixel art saved to backend.');
+    } else {
+      addLog('Cannot save pixel art: WebSocket offline.');
+    }
+  };
+
+  const publishPixelArtLive = () => {
+    const sent = sendWsMessage({ type: 'show-pixel-art', data: pixelArt });
+    if (sent) {
+      setPixelArtDirty(false);
+      setIsPlaying(false);
+      setCurrentTime(0);
+      setFrameState({});
+      addLog('Pixel art published live on the wall.');
+    } else {
+      addLog('Cannot publish pixel art: WebSocket offline.');
+    }
   };
 
   const runPingDiagnostics = async () => {
@@ -88,6 +129,9 @@ export default function App() {
         const msg = JSON.parse(event.data);
         if (msg.type === 'config') {
           setConfig(msg.data);
+        } else if (msg.type === 'pixel-art') {
+          setPixelArt(msg.data);
+          setPixelArtDirty(false);
         } else if (msg.type === 'telemetry') {
           setTelemetry(msg.data);
         } else if (msg.type === 'frame') {
@@ -170,15 +214,11 @@ export default function App() {
     if (isPlaying) {
       setIsPlaying(false);
       addLog('Show paused.');
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: 'stop' }));
-      }
+      sendWsMessage({ type: 'stop' });
     } else {
       setIsPlaying(true);
       addLog('Show playing...');
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: 'play' }));
-      }
+      sendWsMessage({ type: 'play' });
     }
   };
 
@@ -188,9 +228,7 @@ export default function App() {
     setIsPlaying(false);
     setCurrentTime(0);
     addLog('Show stopped & rewound.');
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'stop' }));
-    }
+    sendWsMessage({ type: 'stop' });
   };
 
   const handleBlackout = () => {
@@ -200,9 +238,7 @@ export default function App() {
     setCurrentTime(0);
     setFrameState({});
     addLog('BLACKOUT triggered! Turned off all controllers.');
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'blackout' }));
-    }
+    sendWsMessage({ type: 'blackout' });
   };
 
   const saveConfig = async () => {
@@ -273,6 +309,13 @@ export default function App() {
           onClick={() => setActiveTab('timeline')}
         >
           <Cpu size={16} style={{ marginRight: '6px', display: 'inline' }} /> Timeline Editor
+        </button>
+        <button
+          className="secondary"
+          style={{ borderRadius: '0', borderBottom: activeTab === 'pixelart' ? '2px solid var(--color-red)' : 'none', color: activeTab === 'pixelart' ? 'var(--text-primary)' : 'var(--text-secondary)' }}
+          onClick={() => setActiveTab('pixelart')}
+        >
+          <Palette size={16} style={{ marginRight: '6px', display: 'inline' }} /> Pixel Art Studio
         </button>
         <button
           className="secondary"
@@ -674,6 +717,43 @@ export default function App() {
                 })()}
               </div>
             )}
+          </div>
+        )}
+
+        {activeTab === 'pixelart' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', flex: 1 }}>
+            <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <h3 style={{ fontSize: '1.1rem' }}>Pixel Art Workspace</h3>
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                  <span className={`badge ${pixelArtDirty ? 'badge-gold' : 'badge-green'}`}>
+                    {pixelArtDirty ? 'MODIFIED' : 'SYNCED'}
+                  </span>
+                  <span className={`badge ${wsConnected ? 'badge-green' : 'badge-red'}`}>
+                    {wsConnected ? 'WS ONLINE' : 'WS OFFLINE'}
+                  </span>
+                </div>
+              </div>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.84rem', maxWidth: '72ch', lineHeight: 1.6 }}>
+                Dessine un visuel 32x32 pour le mur LED, importe une image puis réduis-la en pixel art, ou publie le résultat en live sur l'installation.
+              </p>
+            </div>
+
+            <PixelArtStudio
+              pixelArt={pixelArt}
+              onChange={(next) => {
+                setPixelArt(next);
+                setPixelArtDirty(true);
+              }}
+              onSaveDraft={savePixelArtDraft}
+              onGoLive={publishPixelArtLive}
+              onStopLive={() => {
+                clearPixelArtLiveMode('Pixel art live mode stopped.');
+              }}
+              wsConnected={wsConnected}
+              isDirty={pixelArtDirty}
+              onLog={addLog}
+            />
           </div>
         )}
 

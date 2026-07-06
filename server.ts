@@ -9,6 +9,7 @@ import { exec } from 'child_process';
 import { ArtNetSender } from './src/router/artnet.ts';
 import { EHubReceiver } from './src/router/ehub.ts';
 import { generateDefaultConfig, RouterConfig, getEntityIdFromGrid } from './src/router/mapping.ts';
+import { PIXEL_ART_CHANNELS, PIXEL_ART_HEIGHT, PIXEL_ART_WIDTH, type PixelArtFrame } from './src/types/pixelArt.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -22,6 +23,7 @@ const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
 
 // Global Router State
 const CONFIG_FILE = path.join(__dirname, 'config.json');
+const PIXEL_ART_FILE = path.join(__dirname, 'pixel-art.json');
 let activeConfig: RouterConfig = generateDefaultConfig();
 
 if (fs.existsSync(CONFIG_FILE)) {
@@ -82,8 +84,66 @@ function rebuildUniverseRouteMap() {
 // Per-IP packet stats for diagnostics
 const packetCountPerIp: Map<string, number> = new Map();
 
+function normalizePixelArt(data: any): PixelArtFrame | null {
+  if (!data || typeof data !== 'object') return null;
+
+  const width = Number(data.width);
+  const height = Number(data.height);
+  const pixels = Array.isArray(data.pixels) ? data.pixels : null;
+
+  if (width !== PIXEL_ART_WIDTH || height !== PIXEL_ART_HEIGHT) return null;
+  if (!pixels || pixels.length !== width * height * PIXEL_ART_CHANNELS) return null;
+
+  const normalizedPixels = pixels.map((value: unknown) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return 0;
+    return Math.max(0, Math.min(255, Math.round(numeric)));
+  });
+
+  return {
+    width,
+    height,
+    pixels: normalizedPixels,
+  };
+}
+
+function loadPersistedPixelArt() {
+  if (!fs.existsSync(PIXEL_ART_FILE)) return;
+
+  try {
+    const raw = fs.readFileSync(PIXEL_ART_FILE, 'utf8');
+    const parsed = normalizePixelArt(JSON.parse(raw));
+    if (parsed) {
+      customPixelArt = parsed;
+      console.log('Loaded pixel art from pixel-art.json');
+    } else {
+      console.warn('pixel-art.json is invalid, ignoring it.');
+    }
+  } catch (error) {
+    console.error('Failed to load pixel-art.json:', error);
+  }
+}
+
+function persistPixelArt(frame: PixelArtFrame) {
+  fs.writeFileSync(PIXEL_ART_FILE, JSON.stringify(frame, null, 2), 'utf8');
+}
+
+function samplePixelArt(frame: PixelArtFrame, x: number, y: number): [number, number, number, number] {
+  const sampleX = Math.min(frame.width - 1, Math.floor(x / 4));
+  const sampleY = Math.min(frame.height - 1, Math.floor(y / 4));
+  const index = (sampleY * frame.width + sampleX) * PIXEL_ART_CHANNELS;
+
+  return [
+    frame.pixels[index] ?? 0,
+    frame.pixels[index + 1] ?? 0,
+    frame.pixels[index + 2] ?? 0,
+    frame.pixels[index + 3] ?? 0,
+  ];
+}
+
 // Initial build
 rebuildUniverseRouteMap();
+loadPersistedPixelArt();
 
 // Timeline state stored on backend
 interface TimelineBlock {
@@ -110,6 +170,8 @@ let isPlaying = false;
 let playbackTime = 0;
 let routeInterval: NodeJS.Timeout | null = null;
 let activeOverride: string | null = null;
+let activeWallMode: 'pixel-art' | null = null;
+let customPixelArt: PixelArtFrame | null = null;
 
 // Telemetry Stats
 let stats = {
@@ -126,13 +188,19 @@ let currentTelemetry = {
   packetsPerSec: 0,
   kbps: 0,
   ehubPacketsPerSec: 0,
+  packetCountPerIp: {} as Record<string, number>,
+  activeOverride: null as string | null,
+  activeWallMode: null as 'pixel-art' | null,
+  isPlaying: false,
+  loopRunning: false,
+  activeTestPattern: null as { type: 'controller' | 'all'; controllerIdx?: number } | null,
 };
 
 let activeTestPattern: { type: 'controller' | 'all'; controllerIdx?: number; color?: number[] } | null = null;
 
 // 40Hz Main Loop Manager
 function updateRouterState() {
-  const needsLoop = isPlaying || activeOverride !== null || activeTestPattern !== null;
+  const needsLoop = isPlaying || activeOverride !== null || activeTestPattern !== null || activeWallMode !== null;
 
   if (needsLoop) {
     if (!routeInterval) {
@@ -173,6 +241,9 @@ function updateRouterState() {
               });
             });
           }
+        } else if (activeWallMode === 'pixel-art') {
+          evaluateCustomPixelArt(customPixelArt);
+          evaluateLyresBlock('black', playbackTime);
         } else if (isPlaying) {
           const activeBlocks = timelineBlocks.filter(b => playbackTime >= b.startTime && playbackTime <= b.endTime);
           
@@ -277,6 +348,35 @@ function evaluateWallBlock(type: string, time: number) {
       }
 
       // Write directly to universe buffers
+      const buf = getUniverseBuffer(target.universe);
+      buf[target.channel] = r;
+      buf[target.channel + 1] = g;
+      buf[target.channel + 2] = b;
+      dirtyUniverses.add(target.universe);
+    }
+  }
+}
+
+function evaluateCustomPixelArt(frame: PixelArtFrame | null) {
+  for (let x = 0; x < 128; x++) {
+    for (let y = 0; y < 128; y++) {
+      const id = getEntityIdFromGrid(x, y);
+      const target = activeConfig.entityMap[id];
+      if (!target) continue;
+
+      let r = 0;
+      let g = 0;
+      let b = 0;
+
+      if (frame) {
+        const [pr, pg, pb, pa] = samplePixelArt(frame, x, y);
+        if (pa > 0) {
+          r = pr;
+          g = pg;
+          b = pb;
+        }
+      }
+
       const buf = getUniverseBuffer(target.universe);
       buf[target.channel] = r;
       buf[target.channel + 1] = g;
@@ -453,6 +553,7 @@ setInterval(() => {
       ehubPacketsPerSec: Math.round(stats.ehubPacketsReceived / dt),
       packetCountPerIp: ipCounts,
       activeOverride,
+      activeWallMode,
       isPlaying,
       loopRunning: routeInterval !== null,
       activeTestPattern: activeTestPattern ? { type: activeTestPattern.type, controllerIdx: activeTestPattern.controllerIdx } : null,
@@ -524,6 +625,9 @@ wss.on('connection', (ws) => {
   
   ws.send(JSON.stringify({ type: 'config', data: activeConfig }));
   ws.send(JSON.stringify({ type: 'telemetry', data: currentTelemetry }));
+  if (customPixelArt) {
+    ws.send(JSON.stringify({ type: 'pixel-art', data: customPixelArt }));
+  }
 
   ws.on('message', (message) => {
     try {
@@ -531,26 +635,31 @@ wss.on('connection', (ws) => {
 
       if (msg.type === 'play') {
         activeTestPattern = null;
+        activeWallMode = null;
         isPlaying = true;
         updateRouterState();
       } else if (msg.type === 'stop') {
         activeTestPattern = null;
+        activeWallMode = null;
         isPlaying = false;
         playbackTime = 0;
         updateRouterState();
       } else if (msg.type === 'blackout') {
         activeTestPattern = null;
+        activeWallMode = null;
         isPlaying = false;
         playbackTime = 0;
         activeOverride = null;
         updateRouterState();
       } else if (msg.type === 'override') {
         activeTestPattern = null;
+        activeWallMode = null;
         activeOverride = msg.key;
         console.log(`[Override] ${msg.key ? 'ACTIVATED: ' + msg.key : 'RELEASED'} | isPlaying=${isPlaying} | loopRunning=${routeInterval !== null}`);
         updateRouterState();
         console.log(`[Override] After updateRouterState: loopRunning=${routeInterval !== null}`);
       } else if (msg.type === 'test-controller') {
+        activeWallMode = null;
         const { controllerIdx, color } = msg;
         if (activeTestPattern && activeTestPattern.type === 'controller' && activeTestPattern.controllerIdx === controllerIdx) {
           // Toggle off
@@ -567,6 +676,7 @@ wss.on('connection', (ws) => {
           broadcastToClients({ type: 'log', message: `Streaming test pattern to ${ctrl?.ip || 'unknown'}` });
         }
       } else if (msg.type === 'test-all') {
+        activeWallMode = null;
         if (activeTestPattern && activeTestPattern.type === 'all') {
           // Toggle off
           activeTestPattern = null;
@@ -580,6 +690,40 @@ wss.on('connection', (ws) => {
           updateRouterState();
           broadcastToClients({ type: 'log', message: 'Streaming test pattern to ALL controllers (R/G/B/Y).' });
         }
+      } else if (msg.type === 'set-pixel-art') {
+        const frame = normalizePixelArt(msg.data);
+        if (!frame) {
+          broadcastToClients({ type: 'log', message: 'Rejected invalid pixel art payload.' });
+          return;
+        }
+
+        customPixelArt = frame;
+        persistPixelArt(frame);
+        broadcastToClients({ type: 'pixel-art', data: customPixelArt });
+        broadcastToClients({ type: 'log', message: 'Pixel art saved to pixel-art.json.' });
+      } else if (msg.type === 'show-pixel-art') {
+        const frame = normalizePixelArt(msg.data) || customPixelArt;
+        if (!frame) {
+          broadcastToClients({ type: 'log', message: 'No pixel art available to preview.' });
+          return;
+        }
+
+        customPixelArt = frame;
+        persistPixelArt(frame);
+        activeTestPattern = null;
+        activeOverride = null;
+        isPlaying = false;
+        playbackTime = 0;
+        activeWallMode = 'pixel-art';
+        broadcastToClients({ type: 'pixel-art', data: customPixelArt });
+        updateRouterState();
+        broadcastToClients({ type: 'log', message: 'Pixel art live preview enabled.' });
+      } else if (msg.type === 'hide-pixel-art') {
+        if (activeWallMode === 'pixel-art') {
+          activeWallMode = null;
+          updateRouterState();
+          broadcastToClients({ type: 'log', message: 'Pixel art live preview disabled.' });
+        }
       }
     } catch (e) {
       console.error('Error handling WebSocket message:', e);
@@ -592,13 +736,13 @@ wss.on('connection', (ws) => {
 });
 
 // REST API Endpoints
-app.get('/api/config', (req, res) => {
+app.get('/api/config', (_req, res) => {
   res.json(activeConfig);
 });
 
-app.post('/api/config', (req, res) => {
+app.post('/api/config', (_req, res) => {
   try {
-    const newConfig = req.body as RouterConfig;
+    const newConfig = _req.body as RouterConfig;
     activeConfig = newConfig;
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(newConfig, null, 2), 'utf8');
     
@@ -616,7 +760,7 @@ app.post('/api/config', (req, res) => {
 });
 
 // Debug endpoint - shows diagnostics for troubleshooting
-app.get('/api/debug', (req, res) => {
+app.get('/api/debug', (_req, res) => {
   // Count entities per controller IP
   const entitiesPerIp: Record<string, number> = {};
   const universesPerIp: Record<string, number[]> = {};
@@ -669,7 +813,7 @@ app.get('/api/debug', (req, res) => {
 });
 
 // Test pattern endpoint - sends distinct color per controller quadrant
-app.get('/api/test-pattern', (req, res) => {
+app.get('/api/test-pattern', (_req, res) => {
   const colors = [
     [255, 0, 0],     // Controller .45 = RED
     [0, 255, 0],     // Controller .46 = GREEN
@@ -721,7 +865,7 @@ app.get('/api/test-pattern', (req, res) => {
 });
 
 // Ping endpoint to test controller reachability
-app.get('/api/ping', async (req, res) => {
+app.get('/api/ping', async (_req, res) => {
   console.log('[Ping] Diagnosing controller reachability...');
   const pingResults = await Promise.all(
     activeConfig.controllers.map(async (ctrl) => {
