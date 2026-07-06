@@ -35,19 +35,34 @@ if (fs.existsSync(CONFIG_FILE)) {
 // ArtNet & Networking
 const artnetSender = new ArtNetSender();
 
-// Allocate universe DMX buffers: map of (ip + '_' + universe) -> Uint8Array(512)
-const universeBuffers: Map<string, Uint8Array> = new Map();
-const dirtyUniverses: Set<string> = new Set();
+// Allocate universe DMX buffers: map of universe -> Uint8Array(512)
+const universeBuffers: Map<number, Uint8Array> = new Map();
+const dirtyUniverses: Set<number> = new Set();
 
-function getUniverseBuffer(ip: string, universe: number): Uint8Array {
-  const key = `${ip}_${universe}`;
-  let buf = universeBuffers.get(key);
+function getUniverseBuffer(universe: number): Uint8Array {
+  let buf = universeBuffers.get(universe);
   if (!buf) {
     buf = new Uint8Array(512);
-    universeBuffers.set(key, buf);
+    universeBuffers.set(universe, buf);
   }
   return buf;
 }
+
+// Map of universe -> controller IP
+const universeToIpMap: Map<number, string> = new Map();
+
+function rebuildUniverseToIpMap() {
+  universeToIpMap.clear();
+  activeConfig.controllers.forEach((ctrl) => {
+    ctrl.universes.forEach((univ) => {
+      universeToIpMap.set(univ, ctrl.ip);
+    });
+  });
+  console.log(`Rebuilt universe-to-IP map with ${universeToIpMap.size} mappings.`);
+}
+
+// Initial build
+rebuildUniverseToIpMap();
 
 // Timeline state stored on backend
 interface TimelineBlock {
@@ -92,64 +107,75 @@ let currentTelemetry = {
   ehubPacketsPerSec: 0,
 };
 
-// 40Hz Main Loop (every 25ms)
-function startRouterLoop() {
-  if (routeInterval) return;
-  isPlaying = true;
-  console.log('Starting ArtNet transmission loop (40Hz)...');
-  
-  routeInterval = setInterval(() => {
-    // 1. Advance Playback Clock
-    playbackTime += 0.025;
-    if (playbackTime > 35) {
-      playbackTime = 0; // Loop show
+// 40Hz Main Loop Manager
+function updateRouterState() {
+  const needsLoop = isPlaying || activeOverride !== null;
+
+  if (needsLoop) {
+    if (!routeInterval) {
+      console.log('Starting ArtNet transmission loop (40Hz)...');
+      routeInterval = setInterval(() => {
+        // 1. Advance Playback Clock if show is playing
+        if (isPlaying) {
+          playbackTime += 0.025;
+          if (playbackTime > 35) {
+            playbackTime = 0; // Loop show
+          }
+        }
+
+        // 2. Evaluate active blocks & generate DMX values
+        if (isPlaying) {
+          const activeBlocks = timelineBlocks.filter(b => playbackTime >= b.startTime && playbackTime <= b.endTime);
+          
+          // Evaluate wall block
+          const wallBlock = activeBlocks.find(b => b.lane === 'wall');
+          evaluateWallBlock(wallBlock ? wallBlock.type : 'black', playbackTime);
+
+          // Evaluate DMX Lyres block
+          const lyresBlock = activeBlocks.find(b => b.lane === 'lyres');
+          evaluateLyresBlock(lyresBlock ? lyresBlock.type : 'black', playbackTime);
+        } else {
+          // If the show is paused/stopped, output black background and let overrides apply on top
+          evaluateWallBlock('black', playbackTime);
+          evaluateLyresBlock('black', playbackTime);
+        }
+
+        // Apply keyboard overrides if any (passing system timestamp so cycling overrides animate while paused)
+        if (activeOverride) {
+          applyInteractiveOverrides(activeOverride, Date.now() / 1000);
+        }
+
+        // 3. Send dirty universes to controllers via ArtNet
+        dirtyUniverses.forEach((univ) => {
+          const ip = universeToIpMap.get(univ);
+          if (ip) {
+            const buf = universeBuffers.get(univ);
+            if (buf) {
+              artnetSender.send(univ, buf, { ip });
+              stats.packetsSent++;
+              stats.bytesSent += 18 + buf.length;
+            }
+          }
+        });
+
+        dirtyUniverses.clear();
+        stats.framesProcessed++;
+
+        // 4. Send downsampled frame previews to frontend (every 3 frames, ~13 FPS to conserve WS bandwidth)
+        if (stats.framesProcessed % 3 === 0) {
+          sendPreviewToClients();
+        }
+      }, 25); // 40 FPS
     }
-
-    // 2. Evaluate active blocks & generate DMX values
-    const activeBlocks = timelineBlocks.filter(b => playbackTime >= b.startTime && playbackTime <= b.endTime);
-    
-    // Evaluate wall block
-    const wallBlock = activeBlocks.find(b => b.lane === 'wall');
-    evaluateWallBlock(wallBlock ? wallBlock.type : 'black', playbackTime);
-
-    // Evaluate DMX Lyres block
-    const lyresBlock = activeBlocks.find(b => b.lane === 'lyres');
-    evaluateLyresBlock(lyresBlock ? lyresBlock.type : 'black', playbackTime);
-
-    // Apply keyboard overrides if any
-    if (activeOverride) {
-      applyInteractiveOverrides(activeOverride, playbackTime);
+  } else {
+    if (routeInterval) {
+      clearInterval(routeInterval);
+      routeInterval = null;
+      console.log('Stopped ArtNet transmission loop.');
+      sendBlackout();
+      broadcastToClients({ type: 'clear' });
     }
-
-    // 3. Send dirty universes to controllers via ArtNet
-    dirtyUniverses.forEach((key) => {
-      const [ip, universeStr] = key.split('_');
-      const universe = parseInt(universeStr, 10);
-      const buf = universeBuffers.get(key);
-      if (buf) {
-        artnetSender.send(universe, buf, { ip });
-        stats.packetsSent++;
-        stats.bytesSent += 18 + buf.length;
-      }
-    });
-
-    dirtyUniverses.clear();
-    stats.framesProcessed++;
-
-    // 4. Send downsampled frame previews to frontend (every 3 frames, ~13 FPS to conserve WS bandwidth)
-    if (stats.framesProcessed % 3 === 0) {
-      sendPreviewToClients();
-    }
-  }, 25); // 40 FPS
-}
-
-function stopRouterLoop() {
-  if (routeInterval) {
-    clearInterval(routeInterval);
-    routeInterval = null;
   }
-  isPlaying = false;
-  console.log('Stopped ArtNet transmission loop.');
 }
 
 // Visual generators running fully on backend
@@ -201,11 +227,11 @@ function evaluateWallBlock(type: string, time: number) {
       }
 
       // Write directly to universe buffers
-      const buf = getUniverseBuffer(target.ip, target.universe);
+      const buf = getUniverseBuffer(target.universe);
       buf[target.channel] = r;
       buf[target.channel + 1] = g;
       buf[target.channel + 2] = b;
-      dirtyUniverses.add(`${target.ip}_${target.universe}`);
+      dirtyUniverses.add(target.universe);
     }
   }
 }
@@ -244,9 +270,9 @@ function evaluateLyresBlock(type: string, time: number) {
     values.forEach((val, ch) => {
       const target = activeConfig.entityMap[baseId + ch];
       if (target) {
-        const buf = getUniverseBuffer(target.ip, target.universe);
+        const buf = getUniverseBuffer(target.universe);
         buf[target.channel] = val;
-        dirtyUniverses.add(`${target.ip}_${target.universe}`);
+        dirtyUniverses.add(target.universe);
       }
     });
   }
@@ -274,11 +300,11 @@ function applyInteractiveOverrides(key: string, time: number) {
           }
         }
 
-        const buf = getUniverseBuffer(target.ip, target.universe);
+        const buf = getUniverseBuffer(target.universe);
         buf[target.channel] = r;
         buf[target.channel + 1] = g;
         buf[target.channel + 2] = b;
-        dirtyUniverses.add(`${target.ip}_${target.universe}`);
+        dirtyUniverses.add(target.universe);
       }
     }
   }
@@ -290,9 +316,9 @@ function applyInteractiveOverrides(key: string, time: number) {
       values.forEach((val, ch) => {
         const target = activeConfig.entityMap[baseId + ch];
         if (target) {
-          const buf = getUniverseBuffer(target.ip, target.universe);
+          const buf = getUniverseBuffer(target.universe);
           buf[target.channel] = val;
-          dirtyUniverses.add(`${target.ip}_${target.universe}`);
+          dirtyUniverses.add(target.universe);
         }
       });
     }
@@ -309,7 +335,7 @@ function sendPreviewToClients() {
       const id = getEntityIdFromGrid(x, y);
       const target = activeConfig.entityMap[id];
       if (target) {
-        const buf = getUniverseBuffer(target.ip, target.universe);
+        const buf = getUniverseBuffer(target.universe);
         const r = buf[target.channel];
         const g = buf[target.channel + 1];
         const b = buf[target.channel + 2];
@@ -324,7 +350,7 @@ function sendPreviewToClients() {
     for (let ch = 0; ch < 13; ch++) {
       const target = activeConfig.entityMap[baseId + ch];
       if (target) {
-        const buf = getUniverseBuffer(target.ip, target.universe);
+        const buf = getUniverseBuffer(target.universe);
         previewData[baseId + ch] = [buf[target.channel]];
       }
     }
@@ -348,8 +374,7 @@ function sendBlackout() {
         artnetSender.send(univ, buf, { ip: ctrl.ip });
         
         // Reset local cached buffers as well
-        const key = `${ctrl.ip}_${univ}`;
-        const cached = universeBuffers.get(key);
+        const cached = universeBuffers.get(univ);
         if (cached) cached.fill(0);
       });
     });
@@ -392,40 +417,44 @@ function broadcastToClients(message: any) {
 }
 
 // eHub Receiver (Unity integration)
-const ehubReceiver = new EHubReceiver(5000, (entities) => {
-  stats.ehubPacketsReceived++;
-  
-  entities.forEach((ent) => {
-    const target = activeConfig.entityMap[ent.id];
-    if (!target) return;
+const ehubReceiver = new EHubReceiver(
+  5000,
+  (entities) => {
+    stats.ehubPacketsReceived++;
+    
+    entities.forEach((ent) => {
+      const target = activeConfig.entityMap[ent.id];
+      if (!target) return;
 
-    const buf = getUniverseBuffer(target.ip, target.universe);
-    const key = `${target.ip}_${target.universe}`;
+      const buf = getUniverseBuffer(target.universe);
 
-    if (target.type === 'r') {
-      buf[target.channel] = ent.r;
-      buf[target.channel + 1] = ent.g;
-      buf[target.channel + 2] = ent.b;
-      dirtyUniverses.add(key);
-    } else if (target.type === 'g') {
-      buf[target.channel] = ent.g;
-      dirtyUniverses.add(key);
-    } else if (target.type === 'b') {
-      buf[target.channel] = ent.b;
-      dirtyUniverses.add(key);
-    } else if (target.type === 'w') {
-      buf[target.channel] = ent.w;
-      dirtyUniverses.add(key);
-    } else if (target.type === 'dmx') {
-      buf[target.channel] = ent.w;
-      dirtyUniverses.add(key);
+      if (target.type === 'r') {
+        buf[target.channel] = ent.r;
+        buf[target.channel + 1] = ent.g;
+        buf[target.channel + 2] = ent.b;
+        dirtyUniverses.add(target.universe);
+      } else if (target.type === 'g') {
+        buf[target.channel] = ent.g;
+        dirtyUniverses.add(target.universe);
+      } else if (target.type === 'b') {
+        buf[target.channel] = ent.b;
+        dirtyUniverses.add(target.universe);
+      } else if (target.type === 'w') {
+        buf[target.channel] = ent.w;
+        dirtyUniverses.add(target.universe);
+      } else if (target.type === 'dmx') {
+        buf[target.channel] = ent.w;
+        dirtyUniverses.add(target.universe);
+      }
+    });
+
+    if (!isPlaying) {
+      isPlaying = true;
+      updateRouterState();
     }
-  });
-
-  if (!isPlaying) {
-    startRouterLoop();
-  }
-});
+  },
+  (id) => !!activeConfig.entityMap[id] // validation function to auto-detect LE/BE
+);
 
 ehubReceiver.start();
 
@@ -441,15 +470,20 @@ wss.on('connection', (ws) => {
       const msg = JSON.parse(message.toString());
 
       if (msg.type === 'play') {
-        startRouterLoop();
+        isPlaying = true;
+        updateRouterState();
       } else if (msg.type === 'stop') {
-        stopRouterLoop();
+        isPlaying = false;
+        playbackTime = 0;
+        updateRouterState();
       } else if (msg.type === 'blackout') {
-        stopRouterLoop();
-        sendBlackout();
-        broadcastToClients({ type: 'clear' });
+        isPlaying = false;
+        playbackTime = 0;
+        activeOverride = null;
+        updateRouterState();
       } else if (msg.type === 'override') {
         activeOverride = msg.key;
+        updateRouterState();
       }
     } catch (e) {
       console.error('Error handling WebSocket message:', e);
@@ -475,6 +509,9 @@ app.post('/api/config', (req, res) => {
     universeBuffers.clear();
     dirtyUniverses.clear();
 
+    // Rebuild IP mapping
+    rebuildUniverseToIpMap();
+
     broadcastToClients({ type: 'config', data: activeConfig });
     res.json({ success: true, message: 'Configuration saved.' });
   } catch (e) {
@@ -485,8 +522,9 @@ app.post('/api/config', (req, res) => {
 // Clean shutdown
 process.on('SIGINT', () => {
   console.log('Shutting down server...');
-  stopRouterLoop();
-  sendBlackout();
+  isPlaying = false;
+  activeOverride = null;
+  updateRouterState();
   ehubReceiver.stop();
   artnetSender.close();
   httpServer.close(() => {

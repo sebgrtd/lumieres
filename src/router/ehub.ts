@@ -13,10 +13,16 @@ export class EHubReceiver {
   private socket: dgram.Socket | null = null;
   private onStateUpdate: (entities: EntityState[]) => void;
   private port: number;
+  private isValidId: ((id: number) => boolean) | null = null;
+  private isLittleEndian: boolean = true; // Default to true (common for C#/Unity)
+  private endiannessDetected: boolean = false;
 
-  constructor(port: number, onStateUpdate: (entities: EntityState[]) => void) {
+  constructor(port: number, onStateUpdate: (entities: EntityState[]) => void, isValidId?: (id: number) => boolean) {
     this.port = port;
     this.onStateUpdate = onStateUpdate;
+    if (isValidId) {
+      this.isValidId = isValidId;
+    }
   }
 
   public start(): void {
@@ -64,6 +70,24 @@ export class EHubReceiver {
     const entities: EntityState[] = [];
     const payloadLen = buf.length;
 
+    // Auto-detect endianness on the first packet if validator is available
+    if (!this.endiannessDetected && this.isValidId) {
+      let scoreLE = 0;
+      let scoreBE = 0;
+      const checkCount = Math.min(payloadLen - (payloadLen % 6), 60); // check up to first 10 entities
+      for (let i = 0; i < checkCount; i += 6) {
+        const idLE = buf.readUInt16LE(i);
+        const idBE = buf.readUInt16BE(i);
+        if (this.isValidId(idLE)) scoreLE++;
+        if (this.isValidId(idBE)) scoreBE++;
+      }
+      if (scoreLE > 0 || scoreBE > 0) {
+        this.isLittleEndian = scoreLE >= scoreBE;
+        this.endiannessDetected = true;
+        console.log(`[eHub] Auto-detected endianness: ${this.isLittleEndian ? 'Little Endian' : 'Big Endian'} (LE score: ${scoreLE}, BE score: ${scoreBE})`);
+      }
+    }
+
     // A sextuplet is 6 bytes:
     // bytes 0-1: entityId (16-bit uint)
     // byte 2: Red (0-255)
@@ -71,7 +95,7 @@ export class EHubReceiver {
     // byte 4: Blue (0-255)
     // byte 5: White (0-255)
     for (let i = 0; i <= payloadLen - 6; i += 6) {
-      const id = buf.readUInt16BE(i); // Read as big-endian 16-bit integer
+      const id = this.isLittleEndian ? buf.readUInt16LE(i) : buf.readUInt16BE(i);
       const r = buf.readUInt8(i + 2);
       const g = buf.readUInt8(i + 3);
       const b = buf.readUInt8(i + 4);
