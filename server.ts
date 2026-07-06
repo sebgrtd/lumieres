@@ -48,21 +48,38 @@ function getUniverseBuffer(universe: number): Uint8Array {
   return buf;
 }
 
-// Map of universe -> controller IP
-const universeToIpMap: Map<number, string> = new Map();
-
-function rebuildUniverseToIpMap() {
-  universeToIpMap.clear();
-  activeConfig.controllers.forEach((ctrl) => {
-    ctrl.universes.forEach((univ) => {
-      universeToIpMap.set(univ, ctrl.ip);
-    });
-  });
-  console.log(`Rebuilt universe-to-IP map with ${universeToIpMap.size} mappings.`);
+// Map of global universe -> { ip, artnetUniverse (local) }
+interface UniverseRoute {
+  ip: string;
+  artnetUniverse: number; // the universe number to put in the ArtNet packet (after subtracting startUniverse)
 }
 
+const universeRouteMap: Map<number, UniverseRoute> = new Map();
+
+function rebuildUniverseRouteMap() {
+  universeRouteMap.clear();
+  activeConfig.controllers.forEach((ctrl) => {
+    const offset = ctrl.startUniverse ?? 0;
+    ctrl.universes.forEach((univ) => {
+      universeRouteMap.set(univ, {
+        ip: ctrl.ip,
+        artnetUniverse: univ - offset,
+      });
+    });
+  });
+  console.log(`Rebuilt universe route map with ${universeRouteMap.size} mappings.`);
+  // Log per-controller breakdown
+  activeConfig.controllers.forEach((ctrl) => {
+    const offset = ctrl.startUniverse ?? 0;
+    console.log(`  Controller ${ctrl.ip}: ${ctrl.universes.length} universes [${ctrl.universes[0]}..${ctrl.universes[ctrl.universes.length-1]}] -> ArtNet [${ctrl.universes[0] - offset}..${ctrl.universes[ctrl.universes.length-1] - offset}]`);
+  });
+}
+
+// Per-IP packet stats for diagnostics
+const packetCountPerIp: Map<string, number> = new Map();
+
 // Initial build
-rebuildUniverseToIpMap();
+rebuildUniverseRouteMap();
 
 // Timeline state stored on backend
 interface TimelineBlock {
@@ -147,13 +164,14 @@ function updateRouterState() {
 
         // 3. Send dirty universes to controllers via ArtNet
         dirtyUniverses.forEach((univ) => {
-          const ip = universeToIpMap.get(univ);
-          if (ip) {
+          const route = universeRouteMap.get(univ);
+          if (route) {
             const buf = universeBuffers.get(univ);
             if (buf) {
-              artnetSender.send(univ, buf, { ip });
+              artnetSender.send(route.artnetUniverse, buf, { ip: route.ip });
               stats.packetsSent++;
               stats.bytesSent += 18 + buf.length;
+              packetCountPerIp.set(route.ip, (packetCountPerIp.get(route.ip) || 0) + 1);
             }
           }
         });
@@ -510,13 +528,118 @@ app.post('/api/config', (req, res) => {
     dirtyUniverses.clear();
 
     // Rebuild IP mapping
-    rebuildUniverseToIpMap();
+    rebuildUniverseRouteMap();
 
     broadcastToClients({ type: 'config', data: activeConfig });
     res.json({ success: true, message: 'Configuration saved.' });
   } catch (e) {
     res.status(500).json({ success: false, error: (e as Error).message });
   }
+});
+
+// Debug endpoint - shows diagnostics for troubleshooting
+app.get('/api/debug', (req, res) => {
+  // Count entities per controller IP
+  const entitiesPerIp: Record<string, number> = {};
+  const universesPerIp: Record<string, number[]> = {};
+  Object.values(activeConfig.entityMap).forEach((target: any) => {
+    entitiesPerIp[target.ip] = (entitiesPerIp[target.ip] || 0) + 1;
+    if (!universesPerIp[target.ip]) universesPerIp[target.ip] = [];
+    if (!universesPerIp[target.ip].includes(target.universe)) {
+      universesPerIp[target.ip].push(target.universe);
+    }
+  });
+
+  // Universe route map
+  const routeMap: Record<number, UniverseRoute> = {};
+  universeRouteMap.forEach((route, univ) => {
+    routeMap[univ] = route;
+  });
+
+  // Per-IP packet counts
+  const packetCounts: Record<string, number> = {};
+  packetCountPerIp.forEach((count, ip) => {
+    packetCounts[ip] = count;
+  });
+
+  res.json({
+    totalEntities: Object.keys(activeConfig.entityMap).length,
+    entitiesPerIp,
+    universesPerIp: Object.fromEntries(Object.entries(universesPerIp).map(([ip, univs]) => [ip, { count: univs.length, range: `${Math.min(...univs)}-${Math.max(...univs)}` }])),
+    routeMapSample: {
+      universe_0: routeMap[0],
+      universe_31: routeMap[31],
+      universe_32: routeMap[32],
+      universe_33: routeMap[33],
+      universe_63: routeMap[63],
+      universe_64: routeMap[64],
+      universe_95: routeMap[95],
+      universe_96: routeMap[96],
+      universe_127: routeMap[127],
+    },
+    packetCountPerIp: packetCounts,
+    controllers: activeConfig.controllers.map(c => ({
+      ip: c.ip,
+      startUniverse: c.startUniverse ?? 0,
+      universeCount: c.universes.length,
+    })),
+    isPlaying,
+    activeOverride,
+    playbackTime,
+    bufferCount: universeBuffers.size,
+  });
+});
+
+// Test pattern endpoint - sends distinct color per controller quadrant
+app.get('/api/test-pattern', (req, res) => {
+  const colors = [
+    [255, 0, 0],     // Controller .45 = RED
+    [0, 255, 0],     // Controller .46 = GREEN
+    [0, 0, 255],     // Controller .47 = BLUE
+    [255, 255, 0],   // Controller .48 = YELLOW
+  ];
+
+  for (let x = 0; x < 128; x++) {
+    for (let y = 0; y < 128; y++) {
+      const id = getEntityIdFromGrid(x, y);
+      const target = activeConfig.entityMap[id];
+      if (!target) continue;
+
+      const controllerIdx = Math.floor(Math.floor(x / 2) / 16);
+      const [r, g, b] = colors[controllerIdx] || [128, 128, 128];
+
+      const buf = getUniverseBuffer(target.universe);
+      buf[target.channel] = r;
+      buf[target.channel + 1] = g;
+      buf[target.channel + 2] = b;
+      dirtyUniverses.add(target.universe);
+    }
+  }
+
+  // Immediately send to all controllers
+  dirtyUniverses.forEach((univ) => {
+    const route = universeRouteMap.get(univ);
+    if (route) {
+      const buf = universeBuffers.get(univ);
+      if (buf) {
+        artnetSender.send(route.artnetUniverse, buf, { ip: route.ip });
+      }
+    }
+  });
+  dirtyUniverses.clear();
+
+  // Also send preview to web UI
+  sendPreviewToClients();
+
+  res.json({
+    success: true,
+    message: 'Test pattern sent: RED=.45, GREEN=.46, BLUE=.47, YELLOW=.48',
+    routeInfo: activeConfig.controllers.map(c => ({
+      ip: c.ip,
+      startUniverse: c.startUniverse ?? 0,
+      artnetRange: `${0}-${c.universes.length - 1}`,
+    })),
+  });
 });
 
 // Clean shutdown

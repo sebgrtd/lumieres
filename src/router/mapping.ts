@@ -9,6 +9,7 @@ export interface PhysicalTarget {
 export interface ControllerConfig {
   ip: string;
   universes: number[];
+  startUniverse: number; // ArtNet universe offset: the first universe number this controller expects
 }
 
 export interface RouterConfig {
@@ -23,10 +24,10 @@ export interface RouterConfig {
 export function generateDefaultConfig(): RouterConfig {
   const config: RouterConfig = {
     controllers: [
-      { ip: '192.168.1.45', universes: Array.from({ length: 32 }, (_, i) => i) },
-      { ip: '192.168.1.46', universes: Array.from({ length: 32 }, (_, i) => i + 32) },
-      { ip: '192.168.1.47', universes: Array.from({ length: 32 }, (_, i) => i + 64) },
-      { ip: '192.168.1.48', universes: [...Array.from({ length: 32 }, (_, i) => i + 96), 33] }, // includes universe 33
+      { ip: '192.168.1.45', universes: Array.from({ length: 32 }, (_, i) => i), startUniverse: 0 },
+      { ip: '192.168.1.46', universes: Array.from({ length: 32 }, (_, i) => i + 32), startUniverse: 32 },
+      { ip: '192.168.1.47', universes: Array.from({ length: 32 }, (_, i) => i + 64), startUniverse: 64 },
+      { ip: '192.168.1.48', universes: [...Array.from({ length: 32 }, (_, i) => i + 96), 33], startUniverse: 96 }, // includes universe 33
     ],
     entityMap: {},
   };
