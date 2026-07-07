@@ -127,6 +127,7 @@ const LYRIC_CUES: readonly LyricCue[] = [
 
 const REFRAIN_LYRICS_START = 23.35;
 const REFRAIN_LYRICS_END = 39.1;
+const FIRST_HEY_START = 9.2;
 const SHOW_END = 45.0;
 
 let timelineBlocks: TimelineBlock[] = [
@@ -322,7 +323,10 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
 
       let r = 0, g = 0, b = 0;
 
-      if (renderType === 'guitar_intro') {
+      if (renderType === 'cosmo_singer_intro') {
+        const color = drawCosmoSingerIntro(x, y, time, beatProgress, beatIdx);
+        r = color.r; g = color.g; b = color.b;
+      } else if (renderType === 'guitar_intro') {
         // Keep screen completely black for the first 0.6 seconds to cover initial silence
         if (time < 0.6) {
           r = g = b = 0;
@@ -819,6 +823,136 @@ function evaluateStaticBlock(type: string, time: number, isAudioImpact: boolean 
 }
 
 // Character Masks Pixel Art Rendering Engine (Eurovision 2026 "Tanzschein" inspired)
+function drawCosmoSingerIntro(x: number, y: number, time: number, beatProgress: number, beatIdx: number) {
+  let r = 2, g = 13, b = 16;
+  const dx = x - 64;
+  const entrance = Math.max(0, Math.min(1, time / 1.15));
+  const beatGlow = 1 - beatProgress;
+
+  const bgWave = Math.sin((x - 64) * 0.09 + time * 3.2) + Math.cos((y - 64) * 0.08 - time * 2.7 + beatIdx * 0.35);
+  if (bgWave > 1.25) {
+    r = 0;
+    g = 34 + Math.round(22 * beatGlow);
+    b = 38 + Math.round(18 * beatGlow);
+  }
+
+  const ringDist = Math.sqrt(dx * dx + (y - 62) * (y - 62));
+  const ring = Math.abs((ringDist + time * 18) % 28 - 14);
+  if (ring < 1.2 && y < 98) {
+    r = Math.max(r, 0);
+    g = Math.max(g, Math.round(70 * beatGlow));
+    b = Math.max(b, Math.round(90 * beatGlow));
+  }
+
+  const sparkle = ((x * 19 + y * 23 + Math.floor(time * 24)) % 97) === 0;
+  if (sparkle) {
+    r = 30;
+    g = 180;
+    b = 160;
+  }
+
+  const bodyY = y - 30;
+  const torsoWidth = 18 + (bodyY * 0.32);
+  const inTorso = y >= 18 && y <= 67 && Math.abs(dx) < torsoWidth && bodyY >= 0;
+  const inNeck = y >= 62 && y <= 76 && Math.abs(dx) < 7;
+  const inLeftArm = x >= 18 && x <= 40 && y >= 18 && y <= 64 && Math.abs((x - 29) - (y - 18) * 0.18) < 8;
+  const inRightArm = x >= 89 && x <= 111 && y >= 16 && y <= 62 && Math.abs((x - 100) + (y - 18) * 0.14) < 8;
+  const inFace = ((dx * dx) / (17 * 17) + ((y - 85) * (y - 85)) / (22 * 22)) < 1;
+  const hairCap = ((dx + 1) * (dx + 1)) / (25 * 25) + ((y - 106) * (y - 106)) / (16 * 16) < 1;
+  const hairCrown = y >= 99 && y <= 124 && Math.abs(dx + 2 + Math.sin(x * 0.55) * 5) < (23 - Math.max(0, y - 113) * 0.7);
+  const hairFringe = y >= 91 && y <= 105 && x >= 42 && x <= 70 && Math.sin((x - 42) * 0.7) * 5 + 98 > y;
+  const sideBurns = (x >= 42 && x <= 49 && y >= 80 && y <= 99) || (x >= 78 && x <= 84 && y >= 82 && y <= 99);
+  const inHair = hairCap || hairCrown || hairFringe || sideBurns;
+  const curl = inHair && ((x * 7 + y * 5 + Math.floor(time * 6)) % 11 < 8);
+
+  if (inLeftArm || inRightArm || inNeck || inFace) {
+    r = 205;
+    g = 178 + Math.round(28 * Math.sin(time * 1.7 + x * 0.04));
+    b = 146;
+  }
+
+  if (inTorso) {
+    const mirrorPhase = Math.sin(time * 5.5 + x * 0.18 - y * 0.11);
+    const disc = ((Math.floor((x + y * 0.35) / 5) + Math.floor((y - time * 13) / 5)) % 2) === 0;
+    const glint = ((x * 13 + y * 17 + Math.floor(time * 32)) % 41) < 3;
+    if (glint) {
+      r = 240; g = 255; b = 245;
+    } else if (disc) {
+      r = mirrorPhase > 0.25 ? 0 : 25;
+      g = mirrorPhase > 0.25 ? 220 : 90;
+      b = mirrorPhase > 0.25 ? 190 : 140;
+    } else {
+      r = 26; g = 38; b = 44;
+    }
+  }
+
+  if (inHair) {
+    const highlight = ((x * 5 + y * 3 + Math.floor(time * 3)) % 23) < 3 && y > 101;
+    if (highlight) {
+      r = 70; g = 56; b = 48;
+    } else if (curl) {
+      r = 16; g = 13; b = 12;
+    } else {
+      r = 31; g = 24; b = 20;
+    }
+  }
+
+  const starCx = 55;
+  const starCy = 89;
+  const sx = x - starCx;
+  const sy = y - starCy;
+  const starDist = Math.sqrt(sx * sx + sy * sy);
+  const starAngle = Math.atan2(sy, sx);
+  const starRadius = 7 + 5 * Math.max(0, Math.cos(starAngle * 5));
+  const starCore = starDist < starRadius && starDist > 2;
+  const starCenter = starDist <= 5;
+  const starTail = x >= 42 && x <= 62 && y >= 78 && y <= 101 && Math.abs((y - 90) + (x - 53) * 0.48) < 3.8;
+  const bluePaint = starCenter || starCore || starTail;
+  if (bluePaint) {
+    r = 0;
+    g = 58 + Math.round(38 * beatGlow);
+    b = 255;
+  }
+
+  const leftEye = y >= 88 && y <= 90 && x >= 55 && x <= 59;
+  const rightEye = y >= 88 && y <= 90 && x >= 70 && x <= 74;
+  if ((leftEye && !bluePaint) || rightEye) {
+    r = 14; g = 18; b = 18;
+  }
+
+  const isSinging = time > 0.65 && time < FIRST_HEY_START;
+  const mouthOpen = isSinging ? 2 + Math.round(5 * Math.max(beatGlow, (Math.sin(time * 14) + 1) / 2)) : 1;
+  const mouth = x >= 59 && x <= 70 && y >= 75 - mouthOpen && y <= 76 + Math.floor(mouthOpen / 2);
+  if (mouth) {
+    r = 18; g = 14; b = 17;
+  }
+
+  const micHead = ((x - 54) * (x - 54)) / 6 + ((y - 78) * (y - 78)) / 18 < 1;
+  const micHandle = x >= 43 && x <= 49 && y >= 58 && y <= 79 && Math.abs((x - 46) + (y - 68) * 0.18) < 4;
+  const hand = ((x - 48) * (x - 48)) / 70 + ((y - 64) * (y - 64)) / 42 < 1;
+  if (hand) {
+    r = 210; g = 178; b = 140;
+  }
+  if (micHead || micHandle) {
+    r = 32; g = 38; b = 46;
+  }
+  if (micHead && ((x + y) % 3 === 0)) {
+    r = 165; g = 180; b = 190;
+  }
+
+  if (entrance < 1) {
+    const revealLine = 127 - entrance * 140;
+    const noiseGate = ((x * 5 + y * 11) % 17) / 17;
+    if (y < revealLine || noiseGate > entrance + 0.18) {
+      r = Math.round(r * 0.08);
+      g = Math.round(g * 0.08);
+      b = Math.round(b * 0.08);
+    }
+  }
+
+  return { r, g, b };
+}
+
 function drawCharacterMask(type: string, x: number, y: number, time: number, beatProgress: number) {
   let r = 0, g = 0, b = 0;
   
@@ -1005,6 +1139,7 @@ function isPixelInText(str: string, px: number, py: number, startX: number, star
 
 function getWallRenderType(type: string, time: number): string {
   if (type === 'black') return type;
+  if (time < FIRST_HEY_START) return 'cosmo_singer_intro';
   if (time >= REFRAIN_LYRICS_START && time < REFRAIN_LYRICS_END) return 'quadrant_flashes_no_mask';
   if (time >= REFRAIN_LYRICS_END && time <= SHOW_END) return 'laser_sweeps';
   return type;
