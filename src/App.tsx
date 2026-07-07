@@ -3,7 +3,46 @@ import { Play, Pause, Square, Radio, Cpu, Settings, Activity, Trash2, Plus, Volu
 import { Visualizer } from './components/Visualizer.tsx';
 import { synthInstance } from './components/AudioEngine.ts';
 import { analyzeAudioBeats } from './components/AudioAnalyzer.ts';
-import { SHOW_DURATION_SECONDS, SHOW_TIMELINE } from './timeline/showTimeline.ts';
+import { SHOW_DURATION_SECONDS, SHOW_TIMELINE, type TimelineBlock } from './timeline/showTimeline.ts';
+
+const LANE_LABELS: Record<TimelineBlock['lane'], string> = {
+  wall: 'LED Wall Lane',
+  lyres: 'Moving Heads',
+  static: 'Static Spotlight',
+};
+
+const LANE_COLORS: Record<TimelineBlock['lane'], { bg: string; border: string; badge: string }> = {
+  wall: { bg: 'rgba(230, 20, 30, 0.25)', border: 'var(--color-red)', badge: 'badge-red' },
+  lyres: { bg: 'rgba(235, 180, 45, 0.2)', border: 'var(--color-gold)', badge: 'badge-gold' },
+  static: { bg: 'rgba(59, 130, 246, 0.25)', border: 'var(--color-cyan)', badge: 'badge-cyan' },
+};
+
+const EFFECT_OPTIONS: Record<TimelineBlock['lane'], { value: string; label: string }[]> = {
+  wall: [
+    { value: 'black', label: 'Blackout' },
+    { value: 'guitar_intro', label: 'Guitar Intro' },
+    { value: 'intro_ticks', label: 'Intro Ticks' },
+    { value: 'blue_star_burst', label: 'COSMO Blue Star' },
+    { value: 'quadrant_flashes', label: 'Quadrant Flash' },
+    { value: 'laser_sweeps', label: 'Tanzschein Lasers' },
+    { value: 'reactive_drop', label: 'Tanzschein Drop' },
+  ],
+  lyres: [
+    { value: 'black', label: 'Lyres Off' },
+    { value: 'lyre_intro', label: 'Intro Silver Sweep' },
+    { value: 'lyre_kick_pulse', label: 'Lyres Kick Snap' },
+    { value: 'lyre_circle_color', label: 'Lyres Color Circle' },
+    { value: 'lyre_buildup_strobe', label: 'Lyres Buildup Strobe' },
+    { value: 'lyre_drop_trap', label: 'Lyres Mirrored Chases' },
+  ],
+  static: [
+    { value: 'static_off', label: 'Spotlight Off' },
+    { value: 'static_measure_pulse', label: 'Spot Blue Pulse' },
+    { value: 'static_snare_flash', label: 'Spot Magenta Snare' },
+    { value: 'static_dimmer_rise', label: 'Spot Dimmer Rise' },
+    { value: 'static_drop_strobe', label: 'Spot Strobe Drop' },
+  ],
+};
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'timeline' | 'config'>('dashboard');
@@ -35,8 +74,8 @@ export default function App() {
     }
   };
 
-  // Read-only representation of the backend timeline.
-  const blocks = SHOW_TIMELINE;
+  const [blocks, setBlocks] = useState<TimelineBlock[]>(() => SHOW_TIMELINE.map((block) => ({ ...block })));
+  const [showDirty, setShowDirty] = useState(false);
 
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [interactiveOverride, setInteractiveOverride] = useState<string | null>(null);
@@ -44,6 +83,7 @@ export default function App() {
 
   const wsRef = useRef<WebSocket | null>(null);
   const currentTimeRef = useRef(0);
+  const importShowFileRef = useRef<HTMLInputElement | null>(null);
 
   const [pingStatus, setPingStatus] = useState<Record<string, { status: string; latency: string }>>({});
   const [isPinging, setIsPinging] = useState(false);
@@ -97,6 +137,9 @@ export default function App() {
         const msg = JSON.parse(event.data);
         if (msg.type === 'config') {
           setConfig(msg.data);
+        } else if (msg.type === 'timeline') {
+          setBlocks(msg.data);
+          setShowDirty(false);
         } else if (msg.type === 'telemetry') {
           setTelemetry(msg.data);
         } else if (msg.type === 'frame') {
@@ -225,6 +268,130 @@ export default function App() {
     addLog('BLACKOUT triggered! Turned off all controllers.');
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'blackout' }));
+    }
+  };
+
+  const sortTimelineBlocks = (nextBlocks: TimelineBlock[]) => (
+    [...nextBlocks].sort((a, b) => a.startTime - b.startTime || a.lane.localeCompare(b.lane))
+  );
+
+  const updateSelectedBlock = (patch: Partial<TimelineBlock>) => {
+    if (!selectedBlockId) return;
+
+    setBlocks((prev) => sortTimelineBlocks(prev.map((block) => {
+      if (block.id !== selectedBlockId) return block;
+
+      const next = { ...block, ...patch };
+      const startTime = Math.max(0, Math.min(SHOW_DURATION_SECONDS - 0.1, Number(next.startTime) || 0));
+      const endTime = Math.max(startTime + 0.1, Math.min(SHOW_DURATION_SECONDS, Number(next.endTime) || startTime + 1));
+
+      return {
+        ...next,
+        startTime: Number(startTime.toFixed(2)),
+        endTime: Number(endTime.toFixed(2)),
+      };
+    })));
+    setShowDirty(true);
+  };
+
+  const addTimelineBlock = (lane: TimelineBlock['lane']) => {
+    const defaultEffect = EFFECT_OPTIONS[lane][0];
+    const startTime = Math.min(Math.max(0, currentTime), SHOW_DURATION_SECONDS - 1);
+    const block: TimelineBlock = {
+      id: `block-${Date.now()}`,
+      lane,
+      startTime: Number(startTime.toFixed(2)),
+      endTime: Number(Math.min(SHOW_DURATION_SECONDS, startTime + 2).toFixed(2)),
+      type: defaultEffect.value,
+      name: defaultEffect.label,
+    };
+
+    setBlocks((prev) => sortTimelineBlocks([...prev, block]));
+    setSelectedBlockId(block.id);
+    setShowDirty(true);
+  };
+
+  const duplicateSelectedBlock = () => {
+    const block = blocks.find((item) => item.id === selectedBlockId);
+    if (!block) return;
+
+    const duration = block.endTime - block.startTime;
+    const startTime = Math.min(SHOW_DURATION_SECONDS - duration, block.endTime);
+    const duplicate = {
+      ...block,
+      id: `block-${Date.now()}`,
+      startTime: Number(startTime.toFixed(2)),
+      endTime: Number((startTime + duration).toFixed(2)),
+      name: `${block.name} Copy`,
+    };
+
+    setBlocks((prev) => sortTimelineBlocks([...prev, duplicate]));
+    setSelectedBlockId(duplicate.id);
+    setShowDirty(true);
+  };
+
+  const deleteSelectedBlock = () => {
+    if (!selectedBlockId) return;
+    setBlocks((prev) => prev.filter((block) => block.id !== selectedBlockId));
+    setSelectedBlockId(null);
+    setShowDirty(true);
+  };
+
+  const saveShow = async () => {
+    try {
+      const res = await fetch('/api/show', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ blocks }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setBlocks(data.blocks);
+        setShowDirty(false);
+        addLog(`Show timeline saved: ${data.blocks.length} segments.`);
+      } else {
+        addLog(`Error saving show: ${data.error}`);
+      }
+    } catch (e) {
+      addLog(`Failed to save show: ${(e as Error).message}`);
+    }
+  };
+
+  const resetShow = async () => {
+    try {
+      const res = await fetch('/api/show/reset', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setBlocks(data.blocks);
+        setSelectedBlockId(null);
+        setShowDirty(false);
+        addLog('Show timeline reset to default sequence.');
+      } else {
+        addLog(`Error resetting show: ${data.error}`);
+      }
+    } catch (e) {
+      addLog(`Failed to reset show: ${(e as Error).message}`);
+    }
+  };
+
+  const importShow = async (file: File) => {
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const importedBlocks = Array.isArray(parsed) ? parsed : parsed.blocks;
+      if (!Array.isArray(importedBlocks)) {
+        throw new Error('JSON must contain a blocks array.');
+      }
+      setBlocks(sortTimelineBlocks(importedBlocks));
+      setSelectedBlockId(null);
+      setShowDirty(true);
+      addLog(`Imported ${importedBlocks.length} show segments. Save to apply on backend.`);
+    } catch (e) {
+      addLog(`Failed to import show: ${(e as Error).message}`);
+    } finally {
+      if (importShowFileRef.current) {
+        importShowFileRef.current.value = '';
+      }
     }
   };
 
@@ -639,8 +806,17 @@ export default function App() {
             
             <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h3 style={{ fontSize: '1.1rem' }}>Show Sequence Ruler</h3>
-                <span className="badge badge-gold">Track: COSMÓ - Tanzschein (45s Showcase - Eurovision 2026)</span>
+                <div>
+                  <h3 style={{ fontSize: '1.1rem' }}>Show Authoring Timeline</h3>
+                  <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Track: COSMÓ - Tanzschein ({SHOW_DURATION_SECONDS}s)</span>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  <span className={`badge ${showDirty ? 'badge-red' : 'badge-green'}`}>{showDirty ? 'UNSAVED' : 'SAVED'}</span>
+                  <button className="secondary" onClick={() => addTimelineBlock('wall')} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Plus size={15} /> Wall</button>
+                  <button className="secondary" onClick={() => addTimelineBlock('lyres')} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Plus size={15} /> Lyres</button>
+                  <button className="secondary" onClick={() => addTimelineBlock('static')} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Plus size={15} /> Spot</button>
+                  <button onClick={saveShow}>Save Show</button>
+                </div>
               </div>
  
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', backgroundColor: 'var(--bg-base)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-accent)' }}>
@@ -754,6 +930,40 @@ export default function App() {
                     <span>{SHOW_DURATION_SECONDS}s (End)</span>
                   </div>
                 </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', flexWrap: 'wrap', marginTop: '16px' }}>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    <button className="secondary" onClick={duplicateSelectedBlock} disabled={!selectedBlockId}>Duplicate Segment</button>
+                    <button className="secondary" onClick={deleteSelectedBlock} disabled={!selectedBlockId} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Trash2 size={15} /> Delete</button>
+                    <button className="secondary" onClick={resetShow}>Reset Default Show</button>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    <input
+                      ref={importShowFileRef}
+                      type="file"
+                      accept="application/json,.json"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (file) importShow(file);
+                      }}
+                      style={{ display: 'none' }}
+                    />
+                    <button className="secondary" onClick={() => importShowFileRef.current?.click()}>Import Show JSON</button>
+                    <button
+                      className="secondary"
+                      onClick={() => {
+                        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({ duration: SHOW_DURATION_SECONDS, blocks }, null, 2));
+                        const dlAnchorElem = document.createElement('a');
+                        dlAnchorElem.setAttribute("href", dataStr);
+                        dlAnchorElem.setAttribute("download", "show.json");
+                        dlAnchorElem.click();
+                        addLog('Exported show JSON file to browser download folder.');
+                      }}
+                    >
+                      Export Show JSON
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -762,7 +972,9 @@ export default function App() {
               <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <h3 style={{ fontSize: '1.1rem' }}>Animation Segment</h3>
-                  <span className="badge badge-cyan">READ ONLY</span>
+                  <span className={`badge ${LANE_COLORS[blocks.find(b => b.id === selectedBlockId)?.lane || 'wall'].badge}`}>
+                    {LANE_LABELS[blocks.find(b => b.id === selectedBlockId)?.lane || 'wall']}
+                  </span>
                 </div>
 
                 {(() => {
@@ -775,39 +987,40 @@ export default function App() {
                         <input
                           type="text"
                           value={block.name}
-                          readOnly
+                          onChange={(event) => updateSelectedBlock({ name: event.target.value })}
                         />
+
+                        <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Target Lane</label>
+                        <select
+                          value={block.lane}
+                          onChange={(event) => {
+                            const lane = event.target.value as TimelineBlock['lane'];
+                            updateSelectedBlock({
+                              lane,
+                              type: EFFECT_OPTIONS[lane][0].value,
+                              name: EFFECT_OPTIONS[lane][0].label,
+                            });
+                          }}
+                        >
+                          <option value="wall">LED Wall</option>
+                          <option value="lyres">Moving Heads</option>
+                          <option value="static">Static Spotlight</option>
+                        </select>
 
                         <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Animation Pattern</label>
                         <select
                           value={block.type}
-                          disabled
+                          onChange={(event) => {
+                            const selectedEffect = EFFECT_OPTIONS[block.lane].find((effect) => effect.value === event.target.value);
+                            updateSelectedBlock({
+                              type: event.target.value,
+                              name: selectedEffect?.label || block.name,
+                            });
+                          }}
                         >
-                          {block.lane === 'wall' ? (
-                            <>
-                              <option value="intro_ticks">Intro Ticks</option>
-                              <option value="blue_star_burst">COSMÓ Blue Star</option>
-                              <option value="quadrant_flashes">Quadrant Flash</option>
-                              <option value="laser_sweeps">Tanzschein Lasers</option>
-                              <option value="reactive_drop">Tanzschein Drop</option>
-                            </>
-                          ) : block.lane === 'lyres' ? (
-                            <>
-                              <option value="lyre_intro">Intro Silver Sweep</option>
-                              <option value="lyre_kick_pulse">Lyres Kick Snap</option>
-                              <option value="lyre_circle_color">Lyres Color Circle</option>
-                              <option value="lyre_buildup_strobe">Lyres Buildup Strobe</option>
-                              <option value="lyre_drop_trap">Lyres Mirrored Chases</option>
-                            </>
-                          ) : (
-                            <>
-                              <option value="static_off">Spotlight Off</option>
-                              <option value="static_measure_pulse">Spot Blue Pulse</option>
-                              <option value="static_snare_flash">Spot Magenta Snare</option>
-                              <option value="static_dimmer_rise">Spot Dimmer Rise</option>
-                              <option value="static_drop_strobe">Spot Strobe Drop</option>
-                            </>
-                          )}
+                          {EFFECT_OPTIONS[block.lane].map((effect) => (
+                            <option key={effect.value} value={effect.value}>{effect.label}</option>
+                          ))}
                         </select>
                       </div>
 
@@ -816,16 +1029,37 @@ export default function App() {
                         <input
                           type="number"
                           step={0.1}
+                          min={0}
+                          max={SHOW_DURATION_SECONDS}
                           value={block.startTime}
-                          readOnly
+                          onChange={(event) => updateSelectedBlock({ startTime: Number(event.target.value) })}
                         />
 
                         <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>End Time (seconds)</label>
                         <input
                           type="number"
                           step={0.1}
+                          min={0.1}
+                          max={SHOW_DURATION_SECONDS}
                           value={block.endTime}
-                          readOnly
+                          onChange={(event) => updateSelectedBlock({ endTime: Number(event.target.value) })}
+                        />
+
+                        <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Quick Position</label>
+                        <input
+                          type="range"
+                          min={0}
+                          max={SHOW_DURATION_SECONDS}
+                          step={0.1}
+                          value={block.startTime}
+                          onChange={(event) => {
+                            const duration = block.endTime - block.startTime;
+                            const startTime = Number(event.target.value);
+                            updateSelectedBlock({
+                              startTime,
+                              endTime: Math.min(SHOW_DURATION_SECONDS, startTime + duration),
+                            });
+                          }}
                         />
                       </div>
                     </div>
