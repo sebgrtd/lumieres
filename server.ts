@@ -31,6 +31,7 @@ const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
 
 // Global Router State
 const CONFIG_FILE = path.join(__dirname, 'config.json');
+const SHOW_FILE = path.join(__dirname, 'show.json');
 let activeConfig: RouterConfig = normalizeRouterConfig(generateDefaultConfig());
 
 if (fs.existsSync(CONFIG_FILE)) {
@@ -118,7 +119,51 @@ const BPM = 130;
 const BEAT_DURATION = 60 / BPM; // ~0.4615s
 const AUDIO_OFFSET = 0.1; // adjust if audio start has delay
 
-let timelineBlocks: TimelineBlock[] = [...SHOW_TIMELINE];
+let timelineBlocks: TimelineBlock[] = loadTimelineFromDisk();
+
+function normalizeTimelineBlock(block: Partial<TimelineBlock>, index: number): TimelineBlock {
+  const lane = block.lane === 'lyres' || block.lane === 'static' ? block.lane : 'wall';
+  const startTime = Math.max(0, Number(block.startTime) || 0);
+  const endTime = Math.min(SHOW_DURATION_SECONDS, Math.max(startTime + 0.1, Number(block.endTime) || startTime + 1));
+
+  return {
+    id: String(block.id || `block-${Date.now()}-${index}`),
+    lane,
+    startTime: Number(startTime.toFixed(2)),
+    endTime: Number(endTime.toFixed(2)),
+    type: String(block.type || (lane === 'static' ? 'static_off' : 'black')),
+    name: String(block.name || 'New Segment'),
+  };
+}
+
+function normalizeTimeline(blocks: Partial<TimelineBlock>[]): TimelineBlock[] {
+  return blocks
+    .map((block, index) => normalizeTimelineBlock(block, index))
+    .sort((a, b) => a.startTime - b.startTime || a.lane.localeCompare(b.lane));
+}
+
+function loadTimelineFromDisk(): TimelineBlock[] {
+  if (!fs.existsSync(SHOW_FILE)) {
+    return normalizeTimeline(SHOW_TIMELINE);
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(SHOW_FILE, 'utf8'));
+    const blocks = Array.isArray(parsed) ? parsed : parsed.blocks;
+    if (!Array.isArray(blocks)) {
+      throw new Error('show.json must contain a blocks array');
+    }
+    console.log('Loaded show timeline from show.json');
+    return normalizeTimeline(blocks);
+  } catch (e) {
+    console.error('Failed to load show.json, using default timeline:', e);
+    return normalizeTimeline(SHOW_TIMELINE);
+  }
+}
+
+function saveTimelineToDisk(blocks: TimelineBlock[]) {
+  fs.writeFileSync(SHOW_FILE, JSON.stringify({ duration: SHOW_DURATION_SECONDS, blocks }, null, 2), 'utf8');
+}
 
 // Playback state
 let isPlaying = false;
@@ -1233,6 +1278,7 @@ wss.on('connection', (ws) => {
   console.log('Client connected to WebSocket.');
   
   ws.send(JSON.stringify({ type: 'config', data: activeConfig }));
+  ws.send(JSON.stringify({ type: 'timeline', data: timelineBlocks }));
   ws.send(JSON.stringify({ type: 'telemetry', data: currentTelemetry }));
 
   ws.on('message', (message) => {
@@ -1363,6 +1409,47 @@ app.post('/api/config/regenerate', (req, res) => {
     });
   } catch (e) {
     res.status(400).json({ success: false, error: (e as Error).message });
+  }
+});
+
+app.get('/api/show', (_req, res) => {
+  res.json({
+    duration: SHOW_DURATION_SECONDS,
+    blocks: timelineBlocks,
+  });
+});
+
+app.post('/api/show', (req, res) => {
+  try {
+    const blocks = Array.isArray(req.body) ? req.body : req.body?.blocks;
+    if (!Array.isArray(blocks)) {
+      res.status(400).json({ success: false, error: 'Expected a blocks array.' });
+      return;
+    }
+
+    timelineBlocks = normalizeTimeline(blocks);
+    saveTimelineToDisk(timelineBlocks);
+    broadcastToClients({ type: 'timeline', data: timelineBlocks });
+
+    res.json({
+      success: true,
+      message: 'Show timeline saved.',
+      duration: SHOW_DURATION_SECONDS,
+      blocks: timelineBlocks,
+    });
+  } catch (e) {
+    res.status(400).json({ success: false, error: (e as Error).message });
+  }
+});
+
+app.post('/api/show/reset', (_req, res) => {
+  try {
+    timelineBlocks = normalizeTimeline(SHOW_TIMELINE);
+    saveTimelineToDisk(timelineBlocks);
+    broadcastToClients({ type: 'timeline', data: timelineBlocks });
+    res.json({ success: true, duration: SHOW_DURATION_SECONDS, blocks: timelineBlocks });
+  } catch (e) {
+    res.status(500).json({ success: false, error: (e as Error).message });
   }
 });
 
