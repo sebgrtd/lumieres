@@ -74,8 +74,31 @@ export default function App() {
     }
   };
 
-  const [blocks, setBlocks] = useState<TimelineBlock[]>(() => SHOW_TIMELINE.map((block) => ({ ...block })));
-  const [showDirty, setShowDirty] = useState(false);
+  const [blocks, setBlocks] = useState<TimelineBlock[]>([
+    { id: '16', lane: 'wall', startTime: 0, endTime: 3.0, type: 'laser_sweeps', name: 'Tanzschein Lasers' },
+    { id: '17', lane: 'lyres', startTime: 0, endTime: 3.0, type: 'lyre_buildup_strobe', name: 'Lyres Buildup Strobe' },
+    { id: '18', lane: 'static', startTime: 0, endTime: 3.0, type: 'static_dimmer_rise', name: 'Spot Dimmer Rise' },
+ 
+    { id: '19', lane: 'wall', startTime: 3.0, endTime: 20.0, type: 'reactive_drop', name: 'Tanzschein Drop' },
+    { id: '20', lane: 'lyres', startTime: 3.0, endTime: 20.0, type: 'lyre_drop_trap', name: 'Lyres Mirrored Chases' },
+    { id: '21', lane: 'static', startTime: 3.0, endTime: 20.0, type: 'static_drop_strobe', name: 'Spot Strobe Drop' },
+
+    { id: '22', lane: 'wall', startTime: 20.0, endTime: 26.0, type: 'blue_star_burst', name: 'COSMÓ Blue Star' },
+    { id: '23', lane: 'lyres', startTime: 20.0, endTime: 26.0, type: 'lyre_kick_pulse', name: 'Lyres Kick Snap' },
+    { id: '24', lane: 'static', startTime: 20.0, endTime: 26.0, type: 'static_measure_pulse', name: 'Spot Blue Pulse' },
+
+    { id: '25', lane: 'wall', startTime: 26.0, endTime: 32.0, type: 'quadrant_flashes', name: 'Quadrant Flash' },
+    { id: '26', lane: 'lyres', startTime: 26.0, endTime: 32.0, type: 'lyre_circle_color', name: 'Lyres Color Circle' },
+    { id: '27', lane: 'static', startTime: 26.0, endTime: 32.0, type: 'static_snare_flash', name: 'Spot Magenta Snare' },
+
+    { id: '28', lane: 'wall', startTime: 32.0, endTime: 40.0, type: 'laser_sweeps', name: 'Tanzschein Lasers 2' },
+    { id: '29', lane: 'lyres', startTime: 32.0, endTime: 40.0, type: 'lyre_buildup_strobe', name: 'Lyres Buildup Strobe 2' },
+    { id: '30', lane: 'static', startTime: 32.0, endTime: 40.0, type: 'static_dimmer_rise', name: 'Spot Dimmer Rise 2' },
+
+    { id: '31', lane: 'wall', startTime: 40.0, endTime: 45.0, type: 'reactive_drop', name: 'Tanzschein Drop 2' },
+    { id: '32', lane: 'lyres', startTime: 40.0, endTime: 45.0, type: 'lyre_drop_trap', name: 'Lyres Mirrored Chases 2' },
+    { id: '33', lane: 'static', startTime: 40.0, endTime: 45.0, type: 'static_drop_strobe', name: 'Spot Strobe Drop 2' }
+  ]);
 
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [interactiveOverride, setInteractiveOverride] = useState<string | null>(null);
@@ -922,46 +945,12 @@ export default function App() {
                     style={{ width: '100%', cursor: 'not-allowed' }}
                   />
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px', fontFamily: 'JetBrains Mono' }}>
-                    <span>0s (Intro Ticks)</span>
-                    <span>7.4s (Blue Star)</span>
-                    <span>14.8s (Quadrants)</span>
-                    <span>22.2s (Buildup)</span>
-                    <span>29.5s (Tanzschein Drop)</span>
-                    <span>{SHOW_DURATION_SECONDS}s (End)</span>
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', flexWrap: 'wrap', marginTop: '16px' }}>
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    <button className="secondary" onClick={duplicateSelectedBlock} disabled={!selectedBlockId}>Duplicate Segment</button>
-                    <button className="secondary" onClick={deleteSelectedBlock} disabled={!selectedBlockId} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Trash2 size={15} /> Delete</button>
-                    <button className="secondary" onClick={resetShow}>Reset Default Show</button>
-                  </div>
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    <input
-                      ref={importShowFileRef}
-                      type="file"
-                      accept="application/json,.json"
-                      onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        if (file) importShow(file);
-                      }}
-                      style={{ display: 'none' }}
-                    />
-                    <button className="secondary" onClick={() => importShowFileRef.current?.click()}>Import Show JSON</button>
-                    <button
-                      className="secondary"
-                      onClick={() => {
-                        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({ duration: SHOW_DURATION_SECONDS, blocks }, null, 2));
-                        const dlAnchorElem = document.createElement('a');
-                        dlAnchorElem.setAttribute("href", dataStr);
-                        dlAnchorElem.setAttribute("download", "show.json");
-                        dlAnchorElem.click();
-                        addLog('Exported show JSON file to browser download folder.');
-                      }}
-                    >
-                      Export Show JSON
-                    </button>
+                    <span>0s (Buildup End)</span>
+                    <span>3.0s (Drop 1)</span>
+                    <span>20.0s (Verse 2)</span>
+                    <span>32.0s (Buildup 2)</span>
+                    <span>40.0s (Drop 2)</span>
+                    <span>45s (End)</span>
                   </div>
                 </div>
               </div>
