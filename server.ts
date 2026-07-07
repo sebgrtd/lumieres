@@ -854,6 +854,7 @@ function drawCosmoSingerIntro(x: number, y: number, time: number, beatProgress: 
   const bodyY = y - 30;
   const torsoWidth = 18 + (bodyY * 0.32);
   const inTorso = y >= 18 && y <= 67 && Math.abs(dx) < torsoWidth && bodyY >= 0;
+  const inBelly = y >= 18 && y < 30 && Math.abs(dx) < 18;
   const inNeck = y >= 62 && y <= 76 && Math.abs(dx) < 7;
   const inLeftArm = x >= 18 && x <= 40 && y >= 18 && y <= 64 && Math.abs((x - 29) - (y - 18) * 0.18) < 8;
   const inRightArm = x >= 89 && x <= 111 && y >= 16 && y <= 62 && Math.abs((x - 100) + (y - 18) * 0.14) < 8;
@@ -865,7 +866,7 @@ function drawCosmoSingerIntro(x: number, y: number, time: number, beatProgress: 
   const inHair = hairCap || hairCrown || hairFringe || sideBurns;
   const curl = inHair && ((x * 7 + y * 5 + Math.floor(time * 6)) % 11 < 8);
 
-  if (inLeftArm || inRightArm || inNeck || inFace) {
+  if (inLeftArm || inRightArm || inNeck || inFace || inBelly) {
     r = 205;
     g = 178 + Math.round(28 * Math.sin(time * 1.7 + x * 0.04));
     b = 146;
