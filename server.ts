@@ -8,7 +8,15 @@ import { fileURLToPath } from 'url';
 import { exec } from 'child_process';
 import { ArtNetSender } from './src/router/artnet.ts';
 import { EHubReceiver } from './src/router/ehub.ts';
-import { generateDefaultConfig, RouterConfig, getEntityIdFromGrid } from './src/router/mapping.ts';
+import {
+  buildConfigFromHardware,
+  generateDefaultConfig,
+  getEntityIdFromGridWithConfig,
+  normalizeRouterConfig,
+  RouterConfig,
+  type FixtureConfig,
+  type LedWallConfig,
+} from './src/router/mapping.ts';
 import { SHOW_DURATION_SECONDS, SHOW_TIMELINE, type TimelineBlock } from './src/timeline/showTimeline.ts';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -23,11 +31,11 @@ const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
 
 // Global Router State
 const CONFIG_FILE = path.join(__dirname, 'config.json');
-let activeConfig: RouterConfig = generateDefaultConfig();
+let activeConfig: RouterConfig = normalizeRouterConfig(generateDefaultConfig());
 
 if (fs.existsSync(CONFIG_FILE)) {
   try {
-    activeConfig = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    activeConfig = normalizeRouterConfig(JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')));
     console.log('Loaded routing configuration from config.json');
   } catch (e) {
     console.error('Failed to load config.json, using defaults:', e);
@@ -83,6 +91,24 @@ function rebuildUniverseRouteMap() {
 
 // Per-IP packet stats for diagnostics
 const packetCountPerIp: Map<string, number> = new Map();
+
+const DESIGN_WIDTH = 128;
+const DESIGN_HEIGHT = 128;
+
+function getWallEntityId(x: number, y: number): number {
+  return getEntityIdFromGridWithConfig(x, y, activeConfig.ledWall);
+}
+
+function forEachVisibleWallPixel(callback: (x: number, y: number, designX: number, designY: number) => void) {
+  const { visibleWidth, visibleHeight } = activeConfig.ledWall;
+  for (let x = 0; x < visibleWidth; x++) {
+    const designX = Math.floor((x / visibleWidth) * DESIGN_WIDTH);
+    for (let y = 0; y < visibleHeight; y++) {
+      const designY = Math.floor((y / visibleHeight) * DESIGN_HEIGHT);
+      callback(x, y, designX, designY);
+    }
+  }
+}
 
 // Initial build
 rebuildUniverseRouteMap();
@@ -262,11 +288,10 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
   const measureIdx = Math.floor(beatIdx / 4);
   const beatInMeasure = beatIdx % 4;
 
-  for (let x = 0; x < 128; x++) {
-    for (let y = 0; y < 128; y++) {
-      const id = getEntityIdFromGrid(x, y);
+  forEachVisibleWallPixel((physicalX, physicalY, x, y) => {
+      const id = getWallEntityId(physicalX, physicalY);
       const target = activeConfig.entityMap[id];
-      if (!target) continue;
+      if (!target) return;
 
       let r = 0, g = 0, b = 0;
 
@@ -536,8 +561,7 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
       buf[target.channel + 1] = g;
       buf[target.channel + 2] = b;
       dirtyUniverses.add(`${target.ip}:${target.universe}`);
-    }
-  }
+  });
 }
 
 function evaluateLyresBlock(type: string, time: number, isAudioImpact: boolean = false) {
@@ -995,11 +1019,10 @@ function applyInteractiveOverrides(key: string, time: number) {
     const adjustedTime = time + AUDIO_OFFSET;
     const beatProgress = (adjustedTime % BEAT_DURATION) / BEAT_DURATION;
 
-    for (let x = 0; x < 128; x++) {
-      for (let y = 0; y < 128; y++) {
-        const id = getEntityIdFromGrid(x, y);
+    forEachVisibleWallPixel((physicalX, physicalY, x, y) => {
+        const id = getWallEntityId(physicalX, physicalY);
         const target = activeConfig.entityMap[id];
-        if (!target) continue;
+        if (!target) return;
 
         const color = drawCharacterMask(maskType, x, y, time, beatProgress);
         // Layer the pixel art on top of background by keeping background pixels where mask is black
@@ -1010,17 +1033,15 @@ function applyInteractiveOverrides(key: string, time: number) {
           buf[target.channel + 2] = color.b;
           dirtyUniverses.add(`${target.ip}:${target.universe}`);
         }
-      }
-    }
+    });
     return;
   }
 
   if (key === 'space' || key === 'a') {
-    for (let x = 0; x < 128; x++) {
-      for (let y = 0; y < 128; y++) {
-        const id = getEntityIdFromGrid(x, y);
+    forEachVisibleWallPixel((physicalX, physicalY, x, y) => {
+        const id = getWallEntityId(physicalX, physicalY);
         const target = activeConfig.entityMap[id];
-        if (!target) continue;
+        if (!target) return;
 
         let r = 0, g = 0, b = 0;
         if (key === 'space') {
@@ -1041,8 +1062,7 @@ function applyInteractiveOverrides(key: string, time: number) {
         buf[target.channel + 1] = g;
         buf[target.channel + 2] = b;
         dirtyUniverses.add(`${target.ip}:${target.universe}`);
-      }
-    }
+    });
   }
 
   if (key === 'l') {
@@ -1065,10 +1085,9 @@ function applyInteractiveOverrides(key: string, time: number) {
 function sendPreviewToClients() {
   const previewData: Record<number, number[]> = {};
   
-  // Send full 128x128 resolution for exact visualizer representation
-  for (let x = 0; x < 128; x++) {
-    for (let y = 0; y < 128; y++) {
-      const id = getEntityIdFromGrid(x, y);
+  // Send the configured wall resolution for exact visualizer representation.
+  forEachVisibleWallPixel((physicalX, physicalY) => {
+      const id = getWallEntityId(physicalX, physicalY);
       const target = activeConfig.entityMap[id];
       if (target) {
         const buf = getUniverseBuffer(target.ip, target.universe);
@@ -1080,8 +1099,7 @@ function sendPreviewToClients() {
           previewData[id] = [r, g, b, 0];
         }
       }
-    }
-  }
+  });
 
   // Add 4 Lyres status explicitly
   for (let l = 0; l < 4; l++) {
@@ -1296,8 +1314,8 @@ app.get('/api/config', (_req, res) => {
 app.post('/api/config', (req, res) => {
   try {
     const newConfig = req.body as RouterConfig;
-    activeConfig = newConfig;
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(newConfig, null, 2), 'utf8');
+    activeConfig = normalizeRouterConfig(newConfig);
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(activeConfig, null, 2), 'utf8');
     
     universeBuffers.clear();
     dirtyUniverses.clear();
@@ -1309,6 +1327,42 @@ app.post('/api/config', (req, res) => {
     res.json({ success: true, message: 'Configuration saved.' });
   } catch (e) {
     res.status(500).json({ success: false, error: (e as Error).message });
+  }
+});
+
+app.post('/api/config/regenerate', (req, res) => {
+  try {
+    const body = req.body as {
+      ledWall?: Partial<LedWallConfig>;
+      fixtures?: Partial<FixtureConfig>;
+      controllerIps?: string[];
+    };
+    const currentIps = activeConfig.controllers.map((ctrl) => ctrl.ip);
+    const nextConfig = buildConfigFromHardware(
+      body.ledWall || activeConfig.ledWall,
+      body.fixtures || activeConfig.fixtures,
+      body.controllerIps || currentIps,
+    );
+
+    activeConfig = normalizeRouterConfig(nextConfig);
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(activeConfig, null, 2), 'utf8');
+    universeBuffers.clear();
+    dirtyUniverses.clear();
+    rebuildUniverseRouteMap();
+    broadcastToClients({ type: 'config', data: activeConfig });
+
+    res.json({
+      success: true,
+      message: 'Physical configuration regenerated.',
+      config: activeConfig,
+      summary: {
+        controllers: activeConfig.controllers.length,
+        ledWallEntities: activeConfig.ledWall.strips * activeConfig.ledWall.ledsPerStrip,
+        totalEntities: Object.keys(activeConfig.entityMap).length,
+      },
+    });
+  } catch (e) {
+    res.status(400).json({ success: false, error: (e as Error).message });
   }
 });
 
@@ -1358,6 +1412,8 @@ app.get('/api/debug', (_req, res) => {
       startUniverse: c.startUniverse ?? 0,
       universeCount: c.universes.length,
     })),
+    ledWall: activeConfig.ledWall,
+    fixtures: activeConfig.fixtures,
     isPlaying,
     activeOverride,
     playbackTime,
@@ -1374,13 +1430,12 @@ app.get('/api/test-pattern', (_req, res) => {
     [255, 255, 0],   // Controller .48 = YELLOW
   ];
 
-  for (let x = 0; x < 128; x++) {
-    for (let y = 0; y < 128; y++) {
-      const id = getEntityIdFromGrid(x, y);
+  forEachVisibleWallPixel((physicalX, physicalY) => {
+      const id = getWallEntityId(physicalX, physicalY);
       const target = activeConfig.entityMap[id];
-      if (!target) continue;
+      if (!target) return;
 
-      const controllerIdx = Math.floor(Math.floor(x / 2) / 16);
+      const controllerIdx = Math.floor(Math.floor(physicalX / 2) / activeConfig.ledWall.stripsPerController);
       const [r, g, b] = colors[controllerIdx] || [128, 128, 128];
 
       const buf = getUniverseBuffer(target.ip, target.universe);
@@ -1388,8 +1443,7 @@ app.get('/api/test-pattern', (_req, res) => {
       buf[target.channel + 1] = g;
       buf[target.channel + 2] = b;
       dirtyUniverses.add(`${target.ip}:${target.universe}`);
-    }
-  }
+  });
 
   // Immediately send to all controllers
   dirtyUniverses.forEach((key) => {
