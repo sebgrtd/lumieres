@@ -8,7 +8,15 @@ import { fileURLToPath } from 'url';
 import { exec } from 'child_process';
 import { ArtNetSender } from './src/router/artnet.ts';
 import { EHubReceiver } from './src/router/ehub.ts';
-import { generateDefaultConfig, RouterConfig, getEntityIdFromGrid } from './src/router/mapping.ts';
+import {
+  buildConfigFromHardware,
+  generateDefaultConfig,
+  getEntityIdFromGridWithConfig,
+  normalizeRouterConfig,
+  RouterConfig,
+  type FixtureConfig,
+  type LedWallConfig,
+} from './src/router/mapping.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -22,11 +30,11 @@ const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
 
 // Global Router State
 const CONFIG_FILE = path.join(__dirname, 'config.json');
-let activeConfig: RouterConfig = generateDefaultConfig();
+let activeConfig: RouterConfig = normalizeRouterConfig(generateDefaultConfig());
 
 if (fs.existsSync(CONFIG_FILE)) {
   try {
-    activeConfig = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    activeConfig = normalizeRouterConfig(JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')));
     console.log('Loaded routing configuration from config.json');
   } catch (e) {
     console.error('Failed to load config.json, using defaults:', e);
@@ -83,6 +91,24 @@ function rebuildUniverseRouteMap() {
 // Per-IP packet stats for diagnostics
 const packetCountPerIp: Map<string, number> = new Map();
 
+const DESIGN_WIDTH = 128;
+const DESIGN_HEIGHT = 128;
+
+function getWallEntityId(x: number, y: number): number {
+  return getEntityIdFromGridWithConfig(x, y, activeConfig.ledWall);
+}
+
+function forEachVisibleWallPixel(callback: (x: number, y: number, designX: number, designY: number) => void) {
+  const { visibleWidth, visibleHeight } = activeConfig.ledWall;
+  for (let x = 0; x < visibleWidth; x++) {
+    const designX = Math.floor((x / visibleWidth) * DESIGN_WIDTH);
+    for (let y = 0; y < visibleHeight; y++) {
+      const designY = Math.floor((y / visibleHeight) * DESIGN_HEIGHT);
+      callback(x, y, designX, designY);
+    }
+  }
+}
+
 // Initial build
 rebuildUniverseRouteMap();
 
@@ -99,7 +125,6 @@ interface TimelineBlock {
 // BPM Constants for COSMÓ - Tanzschein (130 BPM)
 const BPM = 130;
 const BEAT_DURATION = 60 / BPM; // ~0.4615s
-const MEASURE_DURATION = BEAT_DURATION * 4; // ~1.846s
 const AUDIO_OFFSET = 0.1; // adjust if audio start has delay
 
 let timelineBlocks: TimelineBlock[] = [
@@ -142,11 +167,28 @@ let stats = {
 };
 
 let lastStatsTime = Date.now();
-let currentTelemetry = {
+interface TelemetryState {
+  fps: number;
+  packetsPerSec: number;
+  kbps: number;
+  ehubPacketsPerSec: number;
+  packetCountPerIp: Record<string, number>;
+  activeOverride: string | null;
+  isPlaying: boolean;
+  loopRunning: boolean;
+  activeTestPattern: { type: 'controller' | 'all'; controllerIdx?: number } | null;
+}
+
+let currentTelemetry: TelemetryState = {
   fps: 0,
   packetsPerSec: 0,
   kbps: 0,
   ehubPacketsPerSec: 0,
+  packetCountPerIp: {},
+  activeOverride: null,
+  isPlaying: false,
+  loopRunning: false,
+  activeTestPattern: null,
 };
 
 let activeTestPattern: { type: 'controller' | 'all'; controllerIdx?: number; color?: number[] } | null = null;
@@ -275,11 +317,10 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
   const measureIdx = Math.floor(beatIdx / 4);
   const beatInMeasure = beatIdx % 4;
 
-  for (let x = 0; x < 128; x++) {
-    for (let y = 0; y < 128; y++) {
-      const id = getEntityIdFromGrid(x, y);
+  forEachVisibleWallPixel((physicalX, physicalY, x, y) => {
+      const id = getWallEntityId(physicalX, physicalY);
       const target = activeConfig.entityMap[id];
-      if (!target) continue;
+      if (!target) return;
 
       let r = 0, g = 0, b = 0;
 
@@ -402,8 +443,6 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
         } else {
           const dx = x - 64;
           const dy = y - 64;
-          const dist = Math.sqrt(dx*dx + dy*dy);
-          
           const progress = Math.max(0, Math.min(1.0, (time - 20.7) / 7.3));
           const angle = time * (3.0 + progress * 5.0); // accelerates rotation
           
@@ -482,11 +521,6 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
         }
       } else if (type === 'reactive_drop') {
         // 5. Huge TANZ / SCHEIN stroboscopic text + equalizers
-        const dx = x - 64;
-        const dy = y - 64;
-        const dist = Math.sqrt(dx*dx + dy*dy);
-        const angle = Math.atan2(dy, dx);
-        
         // A. Bouncing Equalizer height
         const colIdx = Math.floor(x / 8);
         const bounce = Math.exp(-beatProgress * 4.0);
@@ -556,16 +590,13 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
       buf[target.channel + 1] = g;
       buf[target.channel + 2] = b;
       dirtyUniverses.add(`${target.ip}:${target.universe}`);
-    }
-  }
+  });
 }
 
 function evaluateLyresBlock(type: string, time: number, isAudioImpact: boolean = false) {
   const adjustedTime = time + AUDIO_OFFSET;
   const beatIdx = Math.floor(adjustedTime / BEAT_DURATION);
   const beatProgress = (adjustedTime % BEAT_DURATION) / BEAT_DURATION;
-  const measureIdx = Math.floor(beatIdx / 4);
-  const beatInMeasure = beatIdx % 4;
 
   for (let l = 0; l < 4; l++) {
     const baseId = 34000 + (l + 1) * 100;
@@ -653,7 +684,6 @@ function evaluateStaticBlock(type: string, time: number, isAudioImpact: boolean 
   const adjustedTime = time + AUDIO_OFFSET;
   const beatIdx = Math.floor(adjustedTime / BEAT_DURATION);
   const beatProgress = (adjustedTime % BEAT_DURATION) / BEAT_DURATION;
-  const measureIdx = Math.floor(beatIdx / 4);
   const beatInMeasure = beatIdx % 4;
 
   let r = 0, g = 0, b = 0, w = 0;
@@ -719,7 +749,7 @@ function evaluateStaticBlock(type: string, time: number, isAudioImpact: boolean 
 }
 
 // Character Masks Pixel Art Rendering Engine (Eurovision 2026 "Tanzschein" inspired)
-function drawCharacterMask(type: string, x: number, y: number, time: number, beatProgress: number) {
+function drawCharacterMask(type: string, x: number, y: number, _time: number, beatProgress: number) {
   let r = 0, g = 0, b = 0;
   
   const dx = x - 64;
@@ -1018,11 +1048,10 @@ function applyInteractiveOverrides(key: string, time: number) {
     const adjustedTime = time + AUDIO_OFFSET;
     const beatProgress = (adjustedTime % BEAT_DURATION) / BEAT_DURATION;
 
-    for (let x = 0; x < 128; x++) {
-      for (let y = 0; y < 128; y++) {
-        const id = getEntityIdFromGrid(x, y);
+    forEachVisibleWallPixel((physicalX, physicalY, x, y) => {
+        const id = getWallEntityId(physicalX, physicalY);
         const target = activeConfig.entityMap[id];
-        if (!target) continue;
+        if (!target) return;
 
         const color = drawCharacterMask(maskType, x, y, time, beatProgress);
         // Layer the pixel art on top of background by keeping background pixels where mask is black
@@ -1033,17 +1062,15 @@ function applyInteractiveOverrides(key: string, time: number) {
           buf[target.channel + 2] = color.b;
           dirtyUniverses.add(`${target.ip}:${target.universe}`);
         }
-      }
-    }
+    });
     return;
   }
 
   if (key === 'space' || key === 'a') {
-    for (let x = 0; x < 128; x++) {
-      for (let y = 0; y < 128; y++) {
-        const id = getEntityIdFromGrid(x, y);
+    forEachVisibleWallPixel((physicalX, physicalY, x, y) => {
+        const id = getWallEntityId(physicalX, physicalY);
         const target = activeConfig.entityMap[id];
-        if (!target) continue;
+        if (!target) return;
 
         let r = 0, g = 0, b = 0;
         if (key === 'space') {
@@ -1064,8 +1091,7 @@ function applyInteractiveOverrides(key: string, time: number) {
         buf[target.channel + 1] = g;
         buf[target.channel + 2] = b;
         dirtyUniverses.add(`${target.ip}:${target.universe}`);
-      }
-    }
+    });
   }
 
   if (key === 'l') {
@@ -1088,10 +1114,9 @@ function applyInteractiveOverrides(key: string, time: number) {
 function sendPreviewToClients() {
   const previewData: Record<number, number[]> = {};
   
-  // Send full 128x128 resolution for exact visualizer representation
-  for (let x = 0; x < 128; x++) {
-    for (let y = 0; y < 128; y++) {
-      const id = getEntityIdFromGrid(x, y);
+  // Send the configured wall resolution for exact visualizer representation.
+  forEachVisibleWallPixel((physicalX, physicalY) => {
+      const id = getWallEntityId(physicalX, physicalY);
       const target = activeConfig.entityMap[id];
       if (target) {
         const buf = getUniverseBuffer(target.ip, target.universe);
@@ -1103,8 +1128,7 @@ function sendPreviewToClients() {
           previewData[id] = [r, g, b, 0];
         }
       }
-    }
-  }
+  });
 
   // Add 4 Lyres status explicitly
   for (let l = 0; l < 4; l++) {
@@ -1121,6 +1145,7 @@ function sendPreviewToClients() {
   broadcastToClients({
     type: 'frame',
     time: playbackTime,
+    lyrics: getLyricsAtTime(playbackTime),
     data: previewData,
   });
 }
@@ -1311,15 +1336,15 @@ wss.on('connection', (ws) => {
 });
 
 // REST API Endpoints
-app.get('/api/config', (req, res) => {
+app.get('/api/config', (_req, res) => {
   res.json(activeConfig);
 });
 
 app.post('/api/config', (req, res) => {
   try {
     const newConfig = req.body as RouterConfig;
-    activeConfig = newConfig;
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(newConfig, null, 2), 'utf8');
+    activeConfig = normalizeRouterConfig(newConfig);
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(activeConfig, null, 2), 'utf8');
     
     universeBuffers.clear();
     dirtyUniverses.clear();
@@ -1334,8 +1359,44 @@ app.post('/api/config', (req, res) => {
   }
 });
 
+app.post('/api/config/regenerate', (req, res) => {
+  try {
+    const body = req.body as {
+      ledWall?: Partial<LedWallConfig>;
+      fixtures?: Partial<FixtureConfig>;
+      controllerIps?: string[];
+    };
+    const currentIps = activeConfig.controllers.map((ctrl) => ctrl.ip);
+    const nextConfig = buildConfigFromHardware(
+      body.ledWall || activeConfig.ledWall,
+      body.fixtures || activeConfig.fixtures,
+      body.controllerIps || currentIps,
+    );
+
+    activeConfig = normalizeRouterConfig(nextConfig);
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(activeConfig, null, 2), 'utf8');
+    universeBuffers.clear();
+    dirtyUniverses.clear();
+    rebuildUniverseRouteMap();
+    broadcastToClients({ type: 'config', data: activeConfig });
+
+    res.json({
+      success: true,
+      message: 'Physical configuration regenerated.',
+      config: activeConfig,
+      summary: {
+        controllers: activeConfig.controllers.length,
+        ledWallEntities: activeConfig.ledWall.strips * activeConfig.ledWall.ledsPerStrip,
+        totalEntities: Object.keys(activeConfig.entityMap).length,
+      },
+    });
+  } catch (e) {
+    res.status(400).json({ success: false, error: (e as Error).message });
+  }
+});
+
 // Debug endpoint - shows diagnostics for troubleshooting
-app.get('/api/debug', (req, res) => {
+app.get('/api/debug', (_req, res) => {
   // Count entities per controller IP
   const entitiesPerIp: Record<string, number> = {};
   const universesPerIp: Record<string, number[]> = {};
@@ -1380,6 +1441,8 @@ app.get('/api/debug', (req, res) => {
       startUniverse: c.startUniverse ?? 0,
       universeCount: c.universes.length,
     })),
+    ledWall: activeConfig.ledWall,
+    fixtures: activeConfig.fixtures,
     isPlaying,
     activeOverride,
     playbackTime,
@@ -1388,7 +1451,7 @@ app.get('/api/debug', (req, res) => {
 });
 
 // Test pattern endpoint - sends distinct color per controller quadrant
-app.get('/api/test-pattern', (req, res) => {
+app.get('/api/test-pattern', (_req, res) => {
   const colors = [
     [255, 0, 0],     // Controller .45 = RED
     [0, 255, 0],     // Controller .46 = GREEN
@@ -1396,13 +1459,12 @@ app.get('/api/test-pattern', (req, res) => {
     [255, 255, 0],   // Controller .48 = YELLOW
   ];
 
-  for (let x = 0; x < 128; x++) {
-    for (let y = 0; y < 128; y++) {
-      const id = getEntityIdFromGrid(x, y);
+  forEachVisibleWallPixel((physicalX, physicalY) => {
+      const id = getWallEntityId(physicalX, physicalY);
       const target = activeConfig.entityMap[id];
-      if (!target) continue;
+      if (!target) return;
 
-      const controllerIdx = Math.floor(Math.floor(x / 2) / 16);
+      const controllerIdx = Math.floor(Math.floor(physicalX / 2) / activeConfig.ledWall.stripsPerController);
       const [r, g, b] = colors[controllerIdx] || [128, 128, 128];
 
       const buf = getUniverseBuffer(target.ip, target.universe);
@@ -1410,8 +1472,7 @@ app.get('/api/test-pattern', (req, res) => {
       buf[target.channel + 1] = g;
       buf[target.channel + 2] = b;
       dirtyUniverses.add(`${target.ip}:${target.universe}`);
-    }
-  }
+  });
 
   // Immediately send to all controllers
   dirtyUniverses.forEach((key) => {
@@ -1444,7 +1505,7 @@ app.get('/api/test-pattern', (req, res) => {
 });
 
 // Ping endpoint to test controller reachability
-app.get('/api/ping', async (req, res) => {
+app.get('/api/ping', async (_req, res) => {
   console.log('[Ping] Diagnosing controller reachability...');
   const pingResults = await Promise.all(
     activeConfig.controllers.map(async (ctrl) => {

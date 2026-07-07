@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react';
-import { getEntityIdFromGrid } from '../router/mapping.ts';
+import { DEFAULT_LED_WALL_CONFIG, getEntityIdFromGridWithConfig } from '../router/mapping.ts';
 
 interface VisualizerProps {
   frameState: Record<number, number[]>; // Map of entityId -> [r,g,b,w]
@@ -9,8 +9,12 @@ interface VisualizerProps {
 export const Visualizer: React.FC<VisualizerProps> = ({ frameState, config }) => {
   const gridCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const lyresCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const ledWall = config?.ledWall || DEFAULT_LED_WALL_CONFIG;
+  const wallWidth = ledWall.visibleWidth || DEFAULT_LED_WALL_CONFIG.visibleWidth;
+  const wallHeight = ledWall.visibleHeight || DEFAULT_LED_WALL_CONFIG.visibleHeight;
+  const movingHeadsCount = config?.fixtures?.movingHeads?.count ?? 4;
 
-  // Render LED Wall (128x128)
+  // Render LED Wall at the configured physical resolution.
   useEffect(() => {
     const canvas = gridCanvasRef.current;
     if (!canvas) return;
@@ -18,17 +22,17 @@ export const Visualizer: React.FC<VisualizerProps> = ({ frameState, config }) =>
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const imgData = ctx.createImageData(128, 128);
+    canvas.width = wallWidth;
+    canvas.height = wallHeight;
+    const imgData = ctx.createImageData(wallWidth, wallHeight);
     const data = imgData.data;
 
-    // Loop through 2D coordinate grid (x: 0..127, y: 0..127)
-    for (let x = 0; x < 128; x++) {
-      for (let y = 0; y < 128; y++) {
-        const entityId = getEntityIdFromGrid(x, 127 - y);
+    for (let x = 0; x < wallWidth; x++) {
+      for (let y = 0; y < wallHeight; y++) {
+        const entityId = getEntityIdFromGridWithConfig(x, wallHeight - 1 - y, ledWall);
         const color = frameState[entityId] || [0, 0, 0, 0];
 
-        // Pixel index in 1D array
-        const pixelIdx = (y * 128 + x) * 4;
+        const pixelIdx = (y * wallWidth + x) * 4;
         data[pixelIdx] = color[0];     // R
         data[pixelIdx + 1] = color[1]; // G
         data[pixelIdx + 2] = color[2]; // B
@@ -37,7 +41,7 @@ export const Visualizer: React.FC<VisualizerProps> = ({ frameState, config }) =>
     }
 
     ctx.putImageData(imgData, 0, 0);
-  }, [frameState]);
+  }, [frameState, ledWall, wallHeight, wallWidth]);
 
   // Render Moving Heads (Lyres)
   useEffect(() => {
@@ -62,10 +66,9 @@ export const Visualizer: React.FC<VisualizerProps> = ({ frameState, config }) =>
     ctx.lineTo(width - 10, height - 30);
     ctx.stroke();
 
-    const spacing = width / 5;
+    const spacing = width / (movingHeadsCount + 1);
 
-    for (let l = 0; l < 4; l++) {
-      const fixtureId = `lyre_${l + 1}`;
+    for (let l = 0; l < movingHeadsCount; l++) {
       const x = spacing * (l + 1);
       const y = height - 50;
 
@@ -171,19 +174,19 @@ export const Visualizer: React.FC<VisualizerProps> = ({ frameState, config }) =>
       ctx.textAlign = 'center';
       ctx.fillText(`LYRE ${l + 1}`, x, y + 30);
     }
-  }, [frameState]);
+  }, [frameState, movingHeadsCount]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', width: '100%', height: '100%' }}>
       <div className="card" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', position: 'relative', minHeight: '350px' }}>
         <div style={{ position: 'absolute', top: '12px', left: '15px' }} className="badge badge-red">
-          Mur LED 128x128
+          Mur LED {wallWidth}x{wallHeight}
         </div>
         <div style={{ width: '320px', height: '320px', backgroundColor: '#000', borderRadius: '8px', overflow: 'hidden', border: '2px solid var(--border-accent)', boxShadow: '0 0 20px rgba(0,0,0,0.8)' }}>
           <canvas
             ref={gridCanvasRef}
-            width={128}
-            height={128}
+            width={wallWidth}
+            height={wallHeight}
             style={{
               width: '100%',
               height: '100%',

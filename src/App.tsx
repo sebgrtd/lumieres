@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Play, Pause, Square, Radio, Cpu, Settings, Activity, Trash2, Plus, Volume2 } from 'lucide-react';
 import { Visualizer } from './components/Visualizer.tsx';
 import { synthInstance } from './components/AudioEngine.ts';
@@ -279,6 +279,73 @@ export default function App() {
       }
     } catch (e) {
       addLog(`Failed to connect to backend: ${(e as Error).message}`);
+    }
+  };
+
+  const updateLedWallConfig = (key: string, value: number) => {
+    setConfig((prev: any) => ({
+      ...prev,
+      ledWall: {
+        ...prev.ledWall,
+        [key]: value,
+      },
+    }));
+  };
+
+  const updateMovingHeadsConfig = (key: string, value: number) => {
+    setConfig((prev: any) => ({
+      ...prev,
+      fixtures: {
+        ...prev.fixtures,
+        movingHeads: {
+          ...prev.fixtures?.movingHeads,
+          [key]: value,
+        },
+      },
+    }));
+  };
+
+  const deriveLedWallWiringFromSize = () => {
+    setConfig((prev: any) => {
+      const ledWall = prev.ledWall || {};
+      const visibleWidth = Math.max(1, Number(ledWall.visibleWidth) || 128);
+      const visibleHeight = Math.max(1, Number(ledWall.visibleHeight) || 128);
+      const hiddenStartLeds = Math.max(0, Number(ledWall.hiddenStartLeds) || 0);
+      const hiddenBetweenRunsLeds = Math.max(0, Number(ledWall.hiddenBetweenRunsLeds) || 0);
+      const hiddenEndLeds = Math.max(0, Number(ledWall.hiddenEndLeds) || 0);
+
+      return {
+        ...prev,
+        ledWall: {
+          ...ledWall,
+          strips: Math.ceil(visibleWidth / 2),
+          ledsPerStrip: visibleHeight * 2 + hiddenStartLeds + hiddenBetweenRunsLeds + hiddenEndLeds,
+        },
+      };
+    });
+    addLog('Derived strip count and LEDs per strip from visible wall size.');
+  };
+
+  const regeneratePhysicalMapping = async () => {
+    try {
+      const res = await fetch('/api/config/regenerate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ledWall: config.ledWall,
+          fixtures: config.fixtures,
+          controllerIps: config.controllers.map((ctrl: any) => ctrl.ip),
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setConfig(data.config);
+        addLog(`Regenerated mapping: ${data.summary.totalEntities} entities, ${data.summary.controllers} controllers.`);
+      } else {
+        addLog(`Error regenerating mapping: ${data.error}`);
+      }
+    } catch (e) {
+      addLog(`Failed to regenerate mapping: ${(e as Error).message}`);
     }
   };
 
@@ -828,6 +895,72 @@ export default function App() {
 
         {activeTab === 'config' && config && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', flex: 1 }}>
+            <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <div>
+                  <h3 style={{ fontSize: '1.1rem' }}>Adaptable LED Wall Layout</h3>
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', marginTop: '4px' }}>
+                    Change la taille visible, le nombre de bandes ou les appareils, puis régénère le mapping physique.
+                  </p>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <span className="badge badge-cyan">{config.ledWall?.visibleWidth}x{config.ledWall?.visibleHeight}px</span>
+                  <span className="badge badge-gold">{Object.keys(config.entityMap || {}).length} entities</span>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+                {[
+                  ['visibleWidth', 'Visible width'],
+                  ['visibleHeight', 'Visible height'],
+                  ['strips', 'LED strips'],
+                  ['ledsPerStrip', 'LEDs per strip'],
+                  ['stripsPerController', 'Strips/controller'],
+                  ['hiddenStartLeds', 'Hidden start LEDs'],
+                  ['hiddenBetweenRunsLeds', 'Hidden top LEDs'],
+                  ['hiddenEndLeds', 'Hidden end LEDs'],
+                ].map(([key, label]) => (
+                  <label key={key} style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                    {label}
+                    <input
+                      type="number"
+                      min={key === 'hiddenStartLeds' || key === 'hiddenBetweenRunsLeds' || key === 'hiddenEndLeds' ? 0 : 1}
+                      value={config.ledWall?.[key] ?? 0}
+                      onChange={(e) => updateLedWallConfig(key, parseInt(e.target.value, 10) || 0)}
+                    />
+                  </label>
+                ))}
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  Moving heads count
+                  <input
+                    type="number"
+                    min={0}
+                    value={config.fixtures?.movingHeads?.count ?? 0}
+                    onChange={(e) => updateMovingHeadsConfig('count', parseInt(e.target.value, 10) || 0)}
+                  />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  Moving head channels
+                  <input
+                    type="number"
+                    min={1}
+                    value={config.fixtures?.movingHeads?.channelsPerFixture ?? 13}
+                    onChange={(e) => updateMovingHeadsConfig('channelsPerFixture', parseInt(e.target.value, 10) || 13)}
+                  />
+                </label>
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <button className="secondary" onClick={deriveLedWallWiringFromSize}>Derive wiring from size</button>
+                <button onClick={regeneratePhysicalMapping}>Regenerate physical mapping</button>
+                <span style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>
+                  Recalcule contrôleurs, univers et entityMap depuis la géométrie actuelle.
+                </span>
+              </div>
+            </div>
             
             <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
