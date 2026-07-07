@@ -1,12 +1,11 @@
-import React, { useRef, useEffect } from 'react';
+import { useRef, useEffect } from 'react';
 import { getEntityIdFromGrid } from '../router/mapping.ts';
 
 interface VisualizerProps {
   frameState: Record<number, number[]>; // Map of entityId -> [r,g,b,w]
-  config: any;
 }
 
-export const Visualizer: React.FC<VisualizerProps> = ({ frameState, config }) => {
+export const Visualizer = ({ frameState }: VisualizerProps) => {
   const gridCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const lyresCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -65,7 +64,6 @@ export const Visualizer: React.FC<VisualizerProps> = ({ frameState, config }) =>
     const spacing = width / 5;
 
     for (let l = 0; l < 4; l++) {
-      const fixtureId = `lyre_${l + 1}`;
       const x = spacing * (l + 1);
       const y = height - 50;
 
