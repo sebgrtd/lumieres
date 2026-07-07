@@ -135,13 +135,9 @@ let timelineBlocks: TimelineBlock[] = [
   { id: '17', lane: 'lyres', startTime: 0, endTime: 3.0, type: 'lyre_buildup_strobe', name: 'Lyres Strobe Crescendo' },
   { id: '18', lane: 'static', startTime: 0, endTime: 3.0, type: 'static_dimmer_rise', name: 'Spot Dimmer Rise' },
  
-  { id: '19', lane: 'wall', startTime: 3.0, endTime: 20.0, type: 'reactive_drop', name: 'Tanzschein Chorus Drop' },
-  { id: '20', lane: 'lyres', startTime: 3.0, endTime: 20.0, type: 'lyre_drop_trap', name: 'Lyres Mirror Trap Chases' },
-  { id: '21', lane: 'static', startTime: 3.0, endTime: 20.0, type: 'static_drop_strobe', name: 'Spot Strobe Drop' },
-
-  { id: '22', lane: 'wall', startTime: 20.0, endTime: 26.0, type: 'blue_star_burst', name: 'COSMÓ Blue Star Burst' },
-  { id: '23', lane: 'lyres', startTime: 20.0, endTime: 26.0, type: 'lyre_kick_pulse', name: 'Lyres Kick Snap' },
-  { id: '24', lane: 'static', startTime: 20.0, endTime: 26.0, type: 'static_measure_pulse', name: 'Spot Blue Measure Pulse' },
+  { id: '19', lane: 'wall', startTime: 3.0, endTime: 26.0, type: 'reactive_drop', name: 'Tanzschein Chorus Drop' },
+  { id: '20', lane: 'lyres', startTime: 3.0, endTime: 26.0, type: 'lyre_drop_trap', name: 'Lyres Mirror Trap Chases' },
+  { id: '21', lane: 'static', startTime: 3.0, endTime: 26.0, type: 'static_drop_strobe', name: 'Spot Strobe Drop' },
 
   { id: '25', lane: 'wall', startTime: 26.0, endTime: 32.0, type: 'quadrant_flashes', name: 'Quadrant Controller Flash' },
   { id: '26', lane: 'lyres', startTime: 26.0, endTime: 32.0, type: 'lyre_circle_color', name: 'Lyres Color Circular' },
@@ -406,12 +402,17 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
           }
         }
 
-        // Transition White Flash Impact at the drop entry (from 5.9s to 6.15s)
-        if (time >= 5.9 && time < 6.15) {
-          const flash = 1.0 - (time - 5.9) / 0.25;
-          r = Math.round(r * (1.0 - flash) + 255 * flash);
-          g = Math.round(g * (1.0 - flash) + 255 * flash);
-          b = Math.round(b * (1.0 - flash) + 255 * flash);
+        // Smooth fade-in (20.0s - 20.8s) and fade-out (25.2s - 26.0s) at the ends of the Gazelle sequence
+        if (time >= 20.0 && time <= 20.8) {
+          const fade = (time - 20.0) / 0.8;
+          r = Math.round(r * fade);
+          g = Math.round(g * fade);
+          b = Math.round(b * fade);
+        } else if (time >= 25.2 && time <= 26.0) {
+          const fade = (26.0 - time) / 0.8;
+          r = Math.round(r * fade);
+          g = Math.round(g * fade);
+          b = Math.round(b * fade);
         }
       } else if (renderType === 'quadrant_flashes') {
         // 3. Glowing neon gorilla mask in the center + flashing quadrants
@@ -597,6 +598,17 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
             } else {
               r = 25; g = 0; b = 15; // Deep Magenta wash
             }
+          }
+        }
+
+
+
+        // Overlay the singer between first and second HEY, and after second HEY until the end of the drop (26.0s)
+        const showSinger = (time >= 10.85 && time < 16.6) || (time >= 18.25 && time < 26.0);
+        if (showSinger) {
+          const singer = getSingerPixelColor(x, y, time, beatProgress, beatIdx, 22, 24);
+          if (singer) {
+            r = singer.r; g = singer.g; b = singer.b;
           }
         }
       }
@@ -822,34 +834,21 @@ function evaluateStaticBlock(type: string, time: number, isAudioImpact: boolean 
   });
 }
 
-// Character Masks Pixel Art Rendering Engine (Eurovision 2026 "Tanzschein" inspired)
-function drawCosmoSingerIntro(x: number, y: number, time: number, beatProgress: number, beatIdx: number) {
-  let r = 2, g = 13, b = 16;
+function getSingerPixelColor(
+  x: number,
+  y: number,
+  time: number,
+  beatProgress: number,
+  beatIdx: number,
+  shiftY: number = 6,
+  cropMinY: number | null = null
+): { r: number, g: number, b: number } | null {
+  if (cropMinY !== null && y < cropMinY) {
+    return null;
+  }
+  y = y + shiftY;
   const dx = x - 64;
-  const entrance = Math.max(0, Math.min(1, time / 1.15));
   const beatGlow = 1 - beatProgress;
-
-  const bgWave = Math.sin((x - 64) * 0.09 + time * 3.2) + Math.cos((y - 64) * 0.08 - time * 2.7 + beatIdx * 0.35);
-  if (bgWave > 1.25) {
-    r = 0;
-    g = 34 + Math.round(22 * beatGlow);
-    b = 38 + Math.round(18 * beatGlow);
-  }
-
-  const ringDist = Math.sqrt(dx * dx + (y - 62) * (y - 62));
-  const ring = Math.abs((ringDist + time * 18) % 28 - 14);
-  if (ring < 1.2 && y < 98) {
-    r = Math.max(r, 0);
-    g = Math.max(g, Math.round(70 * beatGlow));
-    b = Math.max(b, Math.round(90 * beatGlow));
-  }
-
-  const sparkle = ((x * 19 + y * 23 + Math.floor(time * 24)) % 97) === 0;
-  if (sparkle) {
-    r = 30;
-    g = 180;
-    b = 160;
-  }
 
   const bodyY = y - 30;
   const torsoWidth = 18 + (bodyY * 0.32);
@@ -865,6 +864,37 @@ function drawCosmoSingerIntro(x: number, y: number, time: number, beatProgress: 
   const sideBurns = (x >= 42 && x <= 49 && y >= 80 && y <= 99) || (x >= 78 && x <= 84 && y >= 82 && y <= 99);
   const inHair = hairCap || hairCrown || hairFringe || sideBurns;
   const curl = inHair && ((x * 7 + y * 5 + Math.floor(time * 6)) % 11 < 8);
+
+  const starCx = 55;
+  const starCy = 89;
+  const sx = x - starCx;
+  const sy = y - starCy;
+  const starDist = Math.sqrt(sx * sx + sy * sy);
+  const starAngle = Math.atan2(sy, sx);
+  const starRadius = 7 + 5 * Math.max(0, Math.cos(starAngle * 5));
+  const starCore = starDist < starRadius && starDist > 2;
+  const starCenter = starDist <= 5;
+  const starTail = x >= 42 && x <= 62 && y >= 78 && y <= 101 && Math.abs((y - 90) + (x - 53) * 0.48) < 3.8;
+  const bluePaint = starCenter || starCore || starTail;
+
+  const leftEye = y >= 88 && y <= 90 && x >= 55 && x <= 59;
+  const rightEye = y >= 88 && y <= 90 && x >= 70 && x <= 74;
+
+  const isSinging = (time > 0.65 && time < FIRST_HEY_START) || (time >= 10.85 && time < 16.6) || (time >= 18.25 && time < 26.0);
+  const mouthOpen = isSinging ? 2 + Math.round(5 * Math.max(beatGlow, (Math.sin(time * 14) + 1) / 2)) : 1;
+  const mouth = x >= 59 && x <= 70 && y >= 75 - mouthOpen && y <= 76 + Math.floor(mouthOpen / 2);
+
+  const micHead = ((x - 54) * (x - 54)) / 6 + ((y - 78) * (y - 78)) / 18 < 1;
+  const micHandle = x >= 43 && x <= 49 && y >= 58 && y <= 79 && Math.abs((x - 46) + (y - 68) * 0.18) < 4;
+  const hand = ((x - 48) * (x - 48)) / 70 + ((y - 64) * (y - 64)) / 42 < 1;
+
+  const isPart = inLeftArm || inRightArm || inNeck || inFace || inBelly || inTorso || inHair || bluePaint || leftEye || rightEye || mouth || micHead || micHandle || hand;
+
+  if (!isPart) {
+    return null;
+  }
+
+  let r = 0, g = 0, b = 0;
 
   if (inLeftArm || inRightArm || inNeck || inFace || inBelly) {
     r = 205;
@@ -898,39 +928,20 @@ function drawCosmoSingerIntro(x: number, y: number, time: number, beatProgress: 
     }
   }
 
-  const starCx = 55;
-  const starCy = 89;
-  const sx = x - starCx;
-  const sy = y - starCy;
-  const starDist = Math.sqrt(sx * sx + sy * sy);
-  const starAngle = Math.atan2(sy, sx);
-  const starRadius = 7 + 5 * Math.max(0, Math.cos(starAngle * 5));
-  const starCore = starDist < starRadius && starDist > 2;
-  const starCenter = starDist <= 5;
-  const starTail = x >= 42 && x <= 62 && y >= 78 && y <= 101 && Math.abs((y - 90) + (x - 53) * 0.48) < 3.8;
-  const bluePaint = starCenter || starCore || starTail;
   if (bluePaint) {
     r = 0;
     g = 58 + Math.round(38 * beatGlow);
     b = 255;
   }
 
-  const leftEye = y >= 88 && y <= 90 && x >= 55 && x <= 59;
-  const rightEye = y >= 88 && y <= 90 && x >= 70 && x <= 74;
   if ((leftEye && !bluePaint) || rightEye) {
     r = 14; g = 18; b = 18;
   }
 
-  const isSinging = time > 0.65 && time < FIRST_HEY_START;
-  const mouthOpen = isSinging ? 2 + Math.round(5 * Math.max(beatGlow, (Math.sin(time * 14) + 1) / 2)) : 1;
-  const mouth = x >= 59 && x <= 70 && y >= 75 - mouthOpen && y <= 76 + Math.floor(mouthOpen / 2);
   if (mouth) {
     r = 18; g = 14; b = 17;
   }
 
-  const micHead = ((x - 54) * (x - 54)) / 6 + ((y - 78) * (y - 78)) / 18 < 1;
-  const micHandle = x >= 43 && x <= 49 && y >= 58 && y <= 79 && Math.abs((x - 46) + (y - 68) * 0.18) < 4;
-  const hand = ((x - 48) * (x - 48)) / 70 + ((y - 64) * (y - 64)) / 42 < 1;
   if (hand) {
     r = 210; g = 178; b = 140;
   }
@@ -941,6 +952,8 @@ function drawCosmoSingerIntro(x: number, y: number, time: number, beatProgress: 
     r = 165; g = 180; b = 190;
   }
 
+  // Entrance fade logic (only if time < 1.15)
+  const entrance = Math.max(0, Math.min(1, time / 1.15));
   if (entrance < 1) {
     const revealLine = 127 - entrance * 140;
     const noiseGate = ((x * 5 + y * 11) % 17) / 17;
@@ -949,6 +962,42 @@ function drawCosmoSingerIntro(x: number, y: number, time: number, beatProgress: 
       g = Math.round(g * 0.08);
       b = Math.round(b * 0.08);
     }
+  }
+
+  return { r, g, b };
+}
+
+// Character Masks Pixel Art Rendering Engine (Eurovision 2026 "Tanzschein" inspired)
+function drawCosmoSingerIntro(x: number, y: number, time: number, beatProgress: number, beatIdx: number) {
+  let r = 2, g = 13, b = 16;
+  const dx = x - 64;
+  const beatGlow = 1 - beatProgress;
+
+  const bgWave = Math.sin((x - 64) * 0.09 + time * 3.2) + Math.cos((y - 64) * 0.08 - time * 2.7 + beatIdx * 0.35);
+  if (bgWave > 1.25) {
+    r = 0;
+    g = 34 + Math.round(22 * beatGlow);
+    b = 38 + Math.round(18 * beatGlow);
+  }
+
+  const ringDist = Math.sqrt(dx * dx + (y - 62) * (y - 62));
+  const ring = Math.abs((ringDist + time * 18) % 28 - 14);
+  if (ring < 1.2 && y < 98) {
+    r = Math.max(r, 0);
+    g = Math.max(g, Math.round(70 * beatGlow));
+    b = Math.max(b, Math.round(90 * beatGlow));
+  }
+
+  const sparkle = ((x * 19 + y * 23 + Math.floor(time * 24)) % 97) === 0;
+  if (sparkle) {
+    r = 30;
+    g = 180;
+    b = 160;
+  }
+
+  const singer = getSingerPixelColor(x, y, time, beatProgress, beatIdx);
+  if (singer) {
+    return singer;
   }
 
   return { r, g, b };
