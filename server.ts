@@ -103,25 +103,29 @@ const MEASURE_DURATION = BEAT_DURATION * 4; // ~1.846s
 const AUDIO_OFFSET = 0.1; // adjust if audio start has delay
 
 let timelineBlocks: TimelineBlock[] = [
-  { id: '1', lane: 'wall', startTime: 0, endTime: 3.7, type: 'intro_ticks', name: 'Intro Ticks' },
-  { id: '2', lane: 'lyres', startTime: 0, endTime: 3.7, type: 'lyre_intro', name: 'Intro Silver Sweep' },
-  { id: '3', lane: 'static', startTime: 0, endTime: 3.7, type: 'static_off', name: 'Spotlight Off' },
+  { id: '16', lane: 'wall', startTime: 0, endTime: 3.0, type: 'laser_sweeps', name: 'Tanzschein Laser Sweeps' },
+  { id: '17', lane: 'lyres', startTime: 0, endTime: 3.0, type: 'lyre_buildup_strobe', name: 'Lyres Strobe Crescendo' },
+  { id: '18', lane: 'static', startTime: 0, endTime: 3.0, type: 'static_dimmer_rise', name: 'Spot Dimmer Rise' },
+ 
+  { id: '19', lane: 'wall', startTime: 3.0, endTime: 20.0, type: 'reactive_drop', name: 'Tanzschein Chorus Drop' },
+  { id: '20', lane: 'lyres', startTime: 3.0, endTime: 20.0, type: 'lyre_drop_trap', name: 'Lyres Mirror Trap Chases' },
+  { id: '21', lane: 'static', startTime: 3.0, endTime: 20.0, type: 'static_drop_strobe', name: 'Spot Strobe Drop' },
 
-  { id: '4', lane: 'wall', startTime: 3.7, endTime: 11.1, type: 'blue_star_burst', name: 'COSMÓ Blue Star Burst' },
-  { id: '5', lane: 'lyres', startTime: 3.7, endTime: 11.1, type: 'lyre_kick_pulse', name: 'Lyres Kick Snap' },
-  { id: '6', lane: 'static', startTime: 3.7, endTime: 11.1, type: 'static_measure_pulse', name: 'Spot Blue Measure Pulse' },
+  { id: '22', lane: 'wall', startTime: 20.0, endTime: 26.0, type: 'blue_star_burst', name: 'COSMÓ Blue Star Burst' },
+  { id: '23', lane: 'lyres', startTime: 20.0, endTime: 26.0, type: 'lyre_kick_pulse', name: 'Lyres Kick Snap' },
+  { id: '24', lane: 'static', startTime: 20.0, endTime: 26.0, type: 'static_measure_pulse', name: 'Spot Blue Measure Pulse' },
 
-  { id: '7', lane: 'wall', startTime: 11.1, endTime: 18.5, type: 'quadrant_flashes', name: 'Quadrant Controller Flash' },
-  { id: '8', lane: 'lyres', startTime: 11.1, endTime: 18.5, type: 'lyre_circle_color', name: 'Lyres Color Circular' },
-  { id: '9', lane: 'static', startTime: 11.1, endTime: 18.5, type: 'static_snare_flash', name: 'Spot Magenta Snare Flash' },
+  { id: '25', lane: 'wall', startTime: 26.0, endTime: 32.0, type: 'quadrant_flashes', name: 'Quadrant Controller Flash' },
+  { id: '26', lane: 'lyres', startTime: 26.0, endTime: 32.0, type: 'lyre_circle_color', name: 'Lyres Color Circular' },
+  { id: '27', lane: 'static', startTime: 26.0, endTime: 32.0, type: 'static_snare_flash', name: 'Spot Magenta Snare Flash' },
 
-  { id: '10', lane: 'wall', startTime: 18.5, endTime: 25.8, type: 'laser_sweeps', name: 'Tanzschein Laser Sweeps' },
-  { id: '11', lane: 'lyres', startTime: 18.5, endTime: 25.8, type: 'lyre_buildup_strobe', name: 'Lyres Strobe Crescendo' },
-  { id: '12', lane: 'static', startTime: 18.5, endTime: 25.8, type: 'static_dimmer_rise', name: 'Spot Dimmer Rise' },
+  { id: '28', lane: 'wall', startTime: 32.0, endTime: 40.0, type: 'laser_sweeps', name: 'Tanzschein Laser Sweeps 2' },
+  { id: '29', lane: 'lyres', startTime: 32.0, endTime: 40.0, type: 'lyre_buildup_strobe', name: 'Lyres Strobe Crescendo 2' },
+  { id: '30', lane: 'static', startTime: 32.0, endTime: 40.0, type: 'static_dimmer_rise', name: 'Spot Dimmer Rise 2' },
 
-  { id: '13', lane: 'wall', startTime: 25.8, endTime: 45.0, type: 'reactive_drop', name: 'Tanzschein Chorus Drop' },
-  { id: '14', lane: 'lyres', startTime: 25.8, endTime: 45.0, type: 'lyre_drop_trap', name: 'Lyres Mirror Trap Chases' },
-  { id: '15', lane: 'static', startTime: 25.8, endTime: 45.0, type: 'static_drop_strobe', name: 'Spot Strobe Drop' }
+  { id: '31', lane: 'wall', startTime: 40.0, endTime: 45.0, type: 'reactive_drop', name: 'Tanzschein Chorus Drop 2' },
+  { id: '32', lane: 'lyres', startTime: 40.0, endTime: 45.0, type: 'lyre_drop_trap', name: 'Lyres Mirror Trap Chases 2' },
+  { id: '33', lane: 'static', startTime: 40.0, endTime: 45.0, type: 'static_drop_strobe', name: 'Spot Strobe Drop 2' }
 ];
 
 // Playback state
@@ -275,6 +279,13 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
   const measureIdx = Math.floor(beatIdx / 4);
   const beatInMeasure = beatIdx % 4;
 
+  let fadeScale = 1.0;
+  if (time < 1.5) {
+    fadeScale = time / 1.5;
+  } else if (time > 43.5) {
+    fadeScale = Math.max(0, (45.0 - time) / 1.5);
+  }
+
   for (let x = 0; x < 128; x++) {
     for (let y = 0; y < 128; y++) {
       const id = getEntityIdFromGrid(x, y);
@@ -363,6 +374,32 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
           }
         }
 
+        // Verse 2 Lyrics overlay (20.0s..26.0s)
+        const inTextRibbon = y >= 42 && y < 87;
+        if (inTextRibbon) {
+          let lyric: { top: string; bottom: string } | null = null;
+          if (time >= 20.0 && time < 22.0) lyric = { top: "GAZELLE", bottom: "WILL TANZEN" };
+          else if (time >= 22.0 && time < 24.0) lyric = { top: "DER LOEWE", bottom: "WILL JAGEN" };
+          else if (time >= 24.0 && time < 26.0) lyric = { top: "HUNGER", bottom: "MACHT BOESE" };
+
+          if (lyric) {
+            const scale = 2;
+            const fontW_top = 7 * scale;
+            const startX_top = 64 - Math.round((lyric.top.length * fontW_top) / 2);
+            const startY_top = 76;
+            const inTextTop = isPixelInText(lyric.top, x, y, startX_top, startY_top, scale, 7);
+
+            const fontW_bottom = 7 * scale;
+            const startX_bottom = 64 - Math.round((lyric.bottom.length * fontW_bottom) / 2);
+            const startY_bottom = 58;
+            const inTextBottom = isPixelInText(lyric.bottom, x, y, startX_bottom, startY_bottom, scale, 7);
+
+            if (inTextTop || inTextBottom) {
+              r = 255; g = 255; b = 255; // White text
+            }
+          }
+        }
+
         // Transition White Flash Impact at the drop entry (from 5.9s to 6.15s)
         if (time >= 5.9 && time < 6.15) {
           const flash = 1.0 - (time - 5.9) / 0.25;
@@ -393,6 +430,33 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
             r = 0; g = 20; b = 30; // dim background
           }
         }
+
+        // Verse 2 Lyrics overlay part 2 (26.0s..32.0s)
+        const inTextRibbon = y >= 42 && y < 87;
+        if (inTextRibbon) {
+          let lyric: { top: string; bottom: string } | null = null;
+          if (time >= 26.0 && time < 28.0) lyric = { top: "AUF DIE", bottom: "PELLE" };
+          else if (time >= 28.0 && time < 30.0) lyric = { top: "IM GEHEGE", bottom: "WIE EINE SAEGE" };
+          else if (time >= 30.0 && time < 32.0) lyric = { top: "KEIN GEREDE", bottom: "ROMANTISCH" };
+
+          if (lyric) {
+            const scale = 2;
+            const fontW_top = 7 * scale;
+            const startX_top = 64 - Math.round((lyric.top.length * fontW_top) / 2);
+            const startY_top = 76;
+            const inTextTop = isPixelInText(lyric.top, x, y, startX_top, startY_top, scale, 7);
+
+            const fontW_bottom = 7 * scale;
+            const startX_bottom = 64 - Math.round((lyric.bottom.length * fontW_bottom) / 2);
+            const startY_bottom = 58;
+            const inTextBottom = isPixelInText(lyric.bottom, x, y, startX_bottom, startY_bottom, scale, 7);
+
+            if (inTextTop || inTextBottom) {
+              r = 255; g = 255; b = 255; // White text
+            }
+          }
+        }
+
       } else if (type === 'laser_sweeps') {
         // 4. Rotating crossing laser tunnel + Lion Mask in the center (Pre-chorus)
         const maskColor = drawCharacterMask('lion', x, y, time, beatProgress);
@@ -404,7 +468,12 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
           const dy = y - 64;
           const dist = Math.sqrt(dx*dx + dy*dy);
           
-          const progress = Math.max(0, Math.min(1.0, (time - 20.7) / 7.3));
+          let progress = 0;
+          if (time < 3.0) {
+            progress = Math.max(0, Math.min(1.0, (time + 4.3) / 7.3));
+          } else {
+            progress = Math.max(0, Math.min(1.0, (time - 32.0) / 8.0));
+          }
           const angle = time * (3.0 + progress * 5.0); // accelerates rotation
           
           // Draw two crossing laser lines
@@ -433,49 +502,22 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
           if (isBorder && strobeOn) {
             r = 255; g = 255; b = 255;
           }
-        }
 
-        // Overlay huge stroboscopic "HEY HEY" on two lines with slide-in transitions (20.7s to 23.0s)
-        if (time >= 20.7 && time < 23.0) {
+          // Buildup 2 Lyrics overlay
           const inTextRibbon = y >= 42 && y < 87;
           if (inTextRibbon) {
-            const scale = 3;
-            
-            // 1. Top "HEY" (slides from left starting at 20.7s)
-            const t1 = time - 20.7;
-            const targetX1 = 32;
-            const startY1 = 86;
-            let startX1 = targetX1;
-            if (t1 < 0.3) {
-              startX1 = Math.round(-80 + 112 * (t1 / 0.3));
-            }
-            const inText1 = isPixelInText("HEY", x, y, startX1, startY1, scale, 7);
+            let lyric: string | null = null;
+            if (time >= 32.0 && time < 35.0) lyric = "EIN KONZEPT";
+            else if (time >= 35.0 && time < 37.0) lyric = "PERFEKT!";
+            else if (time >= 37.0 && time < 40.0) lyric = "TANZSCHEIN...";
 
-            // 2. Bottom "HEY" (slides from right starting at 21.85s)
-            let inText2 = false;
-            if (time >= 21.85) {
-              const t2 = time - 21.85;
-              const targetX2 = 32;
-              const startY2 = 62;
-              let startX2 = targetX2;
-              if (t2 < 0.3) {
-                startX2 = Math.round(128 - 96 * (t2 / 0.3));
-              }
-              inText2 = isPixelInText("HEY", x, y, startX2, startY2, scale, 7);
-            }
-
-            const inText = inText1 || inText2;
-            const invertActive = beatIdx % 2 === 0;
-
-            if (invertActive) {
-              if (inText) {
-                r = 0; g = 0; b = 0; // Black text
-              } else {
-                r = 235; g = 180; b = 45; // Gold background strobe
-              }
-            } else {
-              if (inText) {
-                r = 235; g = 180; b = 45; // Gold text
+            if (lyric) {
+              const scale = 2;
+              const fontW = 7 * scale;
+              const startX = 64 - Math.round((lyric.length * fontW) / 2);
+              const startY = 67;
+              if (isPixelInText(lyric, x, y, startX, startY, scale, 7)) {
+                r = 255; g = 255; b = 255; // White text
               }
             }
           }
@@ -494,8 +536,83 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
         const eqHeight = 10 + baseHeight * (0.4 + 0.6 * bounce);
 
         // B. Center text area (y from 24 to 104)
-        const inRibbon = y >= 24 && y < 104;        if (inRibbon) {
-          const inText = isPixelInTextManual(x, y);
+        const inRibbon = y >= 24 && y < 104;
+        if (inRibbon) {
+          let inText = false;
+          const scale = 3;
+
+          let isHeyHeyTime = false;
+          let t1 = 0;
+          let t2 = -1; // disabled by default
+
+          if (time >= 9.2 && time < 10.4) {
+            isHeyHeyTime = true;
+            t1 = time - 9.2;
+            t2 = time - 9.9;
+          } else if (time >= 16.6 && time < 17.8) {
+            isHeyHeyTime = true;
+            t1 = time - 16.6;
+            t2 = time - 17.3;
+          }
+
+          if (isHeyHeyTime) {
+            // Sliding HEY HEY animation
+            // 1. Top "HEY" (slides from left)
+            const targetX1 = 32;
+            const startY1 = 88; // align with top drop line
+            let startX1 = targetX1;
+            if (t1 < 0.25) {
+              startX1 = Math.round(-80 + 112 * (t1 / 0.25));
+            }
+            const inText1 = isPixelInText("HEY", x, y, startX1, startY1, scale, 7);
+
+            // 2. Bottom "HEY" (slides from right)
+            let inText2 = false;
+            if (t2 >= 0) {
+              const targetX2 = 32;
+              const startY2 = 62; // align with bottom drop line
+              let startX2 = targetX2;
+              if (t2 < 0.25) {
+                startX2 = Math.round(128 - 96 * (t2 / 0.25));
+              }
+              inText2 = isPixelInText("HEY", x, y, startX2, startY2, scale, 7);
+            }
+            inText = inText1 || inText2;
+          } else {
+            // Normal drop lyrics
+            let lyric: { top: string; bottom: string } | null = null;
+            
+            if (time >= 3.0 && time < 4.8) lyric = { top: "TANZ", bottom: "SCHEIN" };
+            else if (time >= 4.8 && time < 6.7) lyric = { top: "STRENG", bottom: "SEIN" };
+            else if (time >= 6.7 && time < 8.5) lyric = { top: "OHNE", bottom: "SCHEIN" };
+            else if (time >= 8.5 && time < 9.2) lyric = { top: "NICHT", bottom: "REIN" }; // Shortened for HEY HEY
+            else if (time >= 10.4 && time < 12.2) lyric = { top: "JEDEN TAG", bottom: "SEIN" };
+            else if (time >= 12.2 && time < 14.1) lyric = { top: "DURCH DIE", bottom: "NACHT" };
+            else if (time >= 14.1 && time < 15.9) lyric = { top: "KEINE", bottom: "LOEWEN" };
+            else if (time >= 15.9 && time < 16.6) lyric = { top: "NICHT", bottom: "REIN" }; // Shortened for HEY HEY
+            else if (time >= 17.8 && time < 19.0) lyric = { top: "JEDEN TAG", bottom: "SEIN" };
+            else if (time >= 19.0 && time <= 20.0) lyric = { top: "TANZEN!", bottom: "" };
+            // Drop 2 lyrics (DMX 40s to 45s)
+            else if (time >= 40.0 && time < 41.8) lyric = { top: "TANZ", bottom: "SCHEIN" };
+            else if (time >= 41.8 && time < 43.7) lyric = { top: "STRENG", bottom: "SEIN" };
+            else if (time >= 43.7 && time <= 45.0) lyric = { top: "OHNE", bottom: "SCHEIN" };
+
+            if (lyric) {
+              const fontW_top = 7 * scale;
+              const startX_top = 64 - Math.round((lyric.top.length * fontW_top) / 2);
+              const startY_top = lyric.bottom ? 88 : 75;
+              const inTextTop = isPixelInText(lyric.top, x, y, startX_top, startY_top, scale, 7);
+
+              let inTextBottom = false;
+              if (lyric.bottom) {
+                const fontW_bottom = 7 * scale;
+                const startX_bottom = 64 - Math.round((lyric.bottom.length * fontW_bottom) / 2);
+                const startY_bottom = 62;
+                inTextBottom = isPixelInText(lyric.bottom, x, y, startX_bottom, startY_bottom, scale, 7);
+              }
+              inText = inTextTop || inTextBottom;
+            }
+          }
 
           const invertActive = beatIdx % 2 === 0;
 
@@ -552,9 +669,9 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
 
       // Write directly to universe buffers
       const buf = getUniverseBuffer(target.ip, target.universe);
-      buf[target.channel] = r;
-      buf[target.channel + 1] = g;
-      buf[target.channel + 2] = b;
+      buf[target.channel] = Math.round(r * fadeScale);
+      buf[target.channel + 1] = Math.round(g * fadeScale);
+      buf[target.channel + 2] = Math.round(b * fadeScale);
       dirtyUniverses.add(`${target.ip}:${target.universe}`);
     }
   }
@@ -604,7 +721,12 @@ function evaluateLyresBlock(type: string, time: number, isAudioImpact: boolean =
     } else if (type === 'lyre_buildup_strobe') {
       // Raise beams to ceiling
       pan = 127;
-      const progress = Math.max(0, Math.min(1.0, (time - 20.7) / 7.3));
+      let progress = 0;
+      if (time < 3.0) {
+        progress = Math.max(0, Math.min(1.0, (time + 4.3) / 7.3));
+      } else {
+        progress = Math.max(0, Math.min(1.0, (time - 32.0) / 8.0));
+      }
       tilt = Math.round(120 + progress * 100);
       dimmer = 255;
       // Accelerate strobe
@@ -635,6 +757,15 @@ function evaluateLyresBlock(type: string, time: number, isAudioImpact: boolean =
       dimmer = 255;
       strobe = Math.max(strobe, 245);
     }
+
+    // Apply global visual fade scale (1.5s fade-in/out)
+    let fadeScale = 1.0;
+    if (time < 1.5) {
+      fadeScale = time / 1.5;
+    } else if (time > 43.5) {
+      fadeScale = Math.max(0, (45.0 - time) / 1.5);
+    }
+    dimmer = Math.round(dimmer * fadeScale);
 
     // Map channels to buffers
     const values = [pan, 0, tilt, 0, 0, dimmer, strobe, colorCh, 0, 0, 0, 0, 0];
@@ -675,7 +806,12 @@ function evaluateStaticBlock(type: string, time: number, isAudioImpact: boolean 
     }
   } else if (type === 'static_dimmer_rise') {
     // Rise white dimmer
-    const progress = Math.max(0, Math.min(1.0, (time - 20.7) / 7.3));
+    let progress = 0;
+    if (time < 3.0) {
+      progress = Math.max(0, Math.min(1.0, (time + 4.3) / 7.3));
+    } else {
+      progress = Math.max(0, Math.min(1.0, (time - 32.0) / 8.0));
+    }
     w = Math.floor(progress * 255);
   } else if (type === 'static_drop_strobe') {
     // Strobe flash
@@ -706,7 +842,21 @@ function evaluateStaticBlock(type: string, time: number, isAudioImpact: boolean 
 
   // Write values to entity IDs 33001 to 33004
   const ids = [33001, 33002, 33003, 33004];
-  const values = [r, g, b, w];
+
+  // Apply global visual fade scale (1.5s fade-in/out)
+  let fadeScale = 1.0;
+  if (time < 1.5) {
+    fadeScale = time / 1.5;
+  } else if (time > 43.5) {
+    fadeScale = Math.max(0, (45.0 - time) / 1.5);
+  }
+
+  const values = [
+    Math.round(r * fadeScale),
+    Math.round(g * fadeScale),
+    Math.round(b * fadeScale),
+    Math.round(w * fadeScale)
+  ];
   
   ids.forEach((id, idx) => {
     const target = activeConfig.entityMap[id];
@@ -903,111 +1053,39 @@ function isPixelInText(str: string, px: number, py: number, startX: number, star
   return (colByte & (1 << relY)) !== 0;
 }
 
-// Handcoded pixel-perfect drawing for the Chorus "TANZ / SCHEIN" block
-// Bypasses scaling arithmetic bugs to align letters vertically and ensure no clipping
-function isPixelInTextManual(x: number, y: number): boolean {
-  // 1. Top line (TANZ): y from 68 to 88 (startY = 88)
-  if (y >= 68 && y <= 88) {
-    const dy = 88 - y;
-    const relY = Math.floor(dy / 3); // 0..6
-    
-    // T: x from 25 to 39
-    if (x >= 25 && x <= 39) {
-      const relX = Math.floor((x - 25) / 3);
-      const colByte = font['T'][relX];
-      return (colByte & (1 << relY)) !== 0;
-    }
-    // A: x from 46 to 60
-    if (x >= 46 && x <= 60) {
-      const relX = Math.floor((x - 46) / 3);
-      const colByte = font['A'][relX];
-      return (colByte & (1 << relY)) !== 0;
-    }
-    // N: x from 67 to 81
-    if (x >= 67 && x <= 81) {
-      const relX = Math.floor((x - 67) / 3);
-      const colByte = font['N'][relX];
-      return (colByte & (1 << relY)) !== 0;
-    }
-    // Z: x from 88 to 102
-    if (x >= 88 && x <= 102) {
-      const relX = Math.floor((x - 88) / 3);
-      const colByte = font['Z'][relX];
-      return (colByte & (1 << relY)) !== 0;
-    }
-  }
-  
-  // 2. Bottom line (SCHEIN): y from 42 to 62 (startY = 62)
-  if (y >= 42 && y <= 62) {
-    const dy = 62 - y;
-    const relY = Math.floor(dy / 3); // 0..6
-    
-    // S: x from 4 to 18
-    if (x >= 4 && x <= 18) {
-      const relX = Math.floor((x - 4) / 3);
-      const colByte = font['S'][relX];
-      return (colByte & (1 << relY)) !== 0;
-    }
-    // C: x from 25 to 39
-    if (x >= 25 && x <= 39) {
-      const relX = Math.floor((x - 25) / 3);
-      const colByte = font['C'][relX];
-      return (colByte & (1 << relY)) !== 0;
-    }
-    // H: x from 46 to 60
-    if (x >= 46 && x <= 60) {
-      const relX = Math.floor((x - 46) / 3);
-      const colByte = font['H'][relX];
-      return (colByte & (1 << relY)) !== 0;
-    }
-    // E: x from 67 to 81
-    if (x >= 67 && x <= 81) {
-      const relX = Math.floor((x - 67) / 3);
-      const colByte = font['E'][relX];
-      return (colByte & (1 << relY)) !== 0;
-    }
-    // I: x from 88 to 102
-    if (x >= 88 && x <= 102) {
-      const relX = Math.floor((x - 88) / 3);
-      const colByte = font['I'][relX];
-      return (colByte & (1 << relY)) !== 0;
-    }
-    // N: x from 109 to 123
-    if (x >= 109 && x <= 123) {
-      const relX = Math.floor((x - 109) / 3);
-      const colByte = font['N'][relX];
-      return (colByte & (1 << relY)) !== 0;
-    }
-  }
-  
-  return false;
-}
+
 
 // Maps timeline playback progress to song lyrics
 function getLyricsAtTime(time: number): string {
-  if (time >= 5.9 && time < 7.7) return "STEH' VOR DEM CLUB";
-  if (time >= 7.7 && time < 9.6) return "LUST AUF TANZ?";
-  if (time >= 9.6 && time < 11.4) return "SUCHE EKSTASE";
-  if (time >= 11.4 && time < 13.3) return "TIER-OASE";
+  if (time >= 0 && time < 3.0) return "TANZSCHEIN...";
   
-  if (time >= 13.3 && time < 15.1) return "GAR NICHT WAHR";
-  if (time >= 15.1 && time < 17.0) return "ZUM AFFEN";
-  if (time >= 17.0 && time < 18.8) return "KEIN TAENZER";
-  if (time >= 18.8 && time < 20.7) return "EINE IDEE";
+  if (time >= 3.0 && time < 4.8) return "TANZSCHEIN";
+  if (time >= 4.8 && time < 6.7) return "STRENG SEIN";
+  if (time >= 6.7 && time < 8.5) return "OHNE SCHEIN";
+  if (time >= 8.5 && time < 9.2) return "NICHT REIN";
+  if (time >= 9.2 && time < 10.4) return "HEY HEY";
+  if (time >= 10.4 && time < 12.2) return "JEDEN TAG SEIN";
+  if (time >= 12.2 && time < 14.1) return "DURCH DIE NACHT";
+  if (time >= 14.1 && time < 15.9) return "KEINE LOEWEN";
+  if (time >= 15.9 && time < 16.6) return "NICHT REIN";
+  if (time >= 16.6 && time < 17.8) return "HEY HEY";
+  if (time >= 17.8 && time < 19.0) return "JEDEN TAG SEIN";
+  if (time >= 19.0 && time < 20.0) return "TANZEN!";
   
-  if (time >= 20.7 && time < 22.5) return "EIN KONZEPT";
-  if (time >= 22.5 && time < 24.3) return "PERFEKT!";
-  if (time >= 24.3 && time < 28.0) return "TANZSCHEIN...";
+  if (time >= 20.0 && time < 22.0) return "GAZELLE TANZEN";
+  if (time >= 22.0 && time < 24.0) return "DER LOEWE JAGEN";
+  if (time >= 24.0 && time < 26.0) return "HUNGER BOESE";
+  if (time >= 26.0 && time < 28.0) return "SUR LA PELLE";
+  if (time >= 28.0 && time < 30.0) return "WIE EINE SAEGE";
+  if (time >= 30.0 && time < 32.0) return "KEIN GEREDE";
   
-  if (time >= 28.0 && time < 29.8) return "TANZSCHEIN";
-  if (time >= 29.8 && time < 31.7) return "STRENG SEIN";
-  if (time >= 31.7 && time < 33.5) return "OHNE SCHEIN";
-  if (time >= 33.5 && time < 35.4) return "NICHT REIN";
-  if (time >= 35.4 && time < 37.2) return "TANZSCHEIN?";
-  if (time >= 37.2 && time < 39.1) return "KEIN WITZ";
-  if (time >= 39.1 && time < 40.9) return "OHNE SCHEIN";
-  if (time >= 40.9 && time < 42.8) return "NICHT REIN";
-  if (time >= 42.8 && time <= 45.0) return "TANZEN!";
+  if (time >= 32.0 && time < 35.0) return "EIN KONZEPT";
+  if (time >= 35.0 && time < 37.0) return "PERFEKT!";
+  if (time >= 37.0 && time < 40.0) return "TANZSCHEIN...";
+  
+  if (time >= 40.0 && time < 41.8) return "TANZSCHEIN";
+  if (time >= 41.8 && time < 43.7) return "STRENG SEIN";
+  if (time >= 43.7 && time <= 45.0) return "OHNE SCHEIN";
   
   return "";
 }

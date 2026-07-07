@@ -3,8 +3,8 @@ export class AudioEngine {
   private isPlaying = false;
   
   // Software offset in seconds to skip the silence at the beginning of the MP3.
-  // Aligned with the beginning of the guitar intro at 5.0s.
-  private readonly AUDIO_START_OFFSET = 5.0;
+  // Aligned with the beginning of the guitar intro at 5.0s, shifted 25s forward.
+  private readonly AUDIO_START_OFFSET = 30.0;
 
   constructor() {
     // Create HTML5 Audio element referencing the public copied MP3
@@ -35,7 +35,19 @@ export class AudioEngine {
 
     const tick = () => {
       if (!this.isPlaying || !this.audio) return;
-      onUpdate(this.getPlaybackTime());
+      
+      const playbackTime = this.getPlaybackTime();
+      onUpdate(playbackTime);
+      
+      // Volume Fade In/Out (1.5 seconds)
+      let volume = 1.0;
+      if (playbackTime < 1.5) {
+        volume = playbackTime / 1.5;
+      } else if (playbackTime > 43.5) {
+        volume = Math.max(0, (45.0 - playbackTime) / 1.5);
+      }
+      this.audio.volume = volume;
+
       requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
