@@ -125,6 +125,10 @@ const LYRIC_CUES: readonly LyricCue[] = [
   { startTime: 37.05, endTime: 39.1, lines: ['NICHT', 'REIN'] },
 ];
 
+const REFRAIN_LYRICS_START = 23.35;
+const REFRAIN_LYRICS_END = 39.1;
+const SHOW_END = 45.0;
+
 let timelineBlocks: TimelineBlock[] = [
   { id: '16', lane: 'wall', startTime: 0, endTime: 3.0, type: 'laser_sweeps', name: 'Tanzschein Laser Sweeps' },
   { id: '17', lane: 'lyres', startTime: 0, endTime: 3.0, type: 'lyre_buildup_strobe', name: 'Lyres Strobe Crescendo' },
@@ -301,6 +305,7 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
   const beatProgress = (adjustedTime % BEAT_DURATION) / BEAT_DURATION;
   const measureIdx = Math.floor(beatIdx / 4);
   const beatInMeasure = beatIdx % 4;
+  const renderType = getWallRenderType(type, time);
 
   let fadeScale = 1.0;
   if (time < 1.5) {
@@ -317,7 +322,7 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
 
       let r = 0, g = 0, b = 0;
 
-      if (type === 'guitar_intro') {
+      if (renderType === 'guitar_intro') {
         // Keep screen completely black for the first 0.6 seconds to cover initial silence
         if (time < 0.6) {
           r = g = b = 0;
@@ -338,7 +343,7 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
             b = Math.round(8 * glow);
           }
         }
-      } else if (type === 'intro_ticks') {
+      } else if (renderType === 'intro_ticks') {
         // 1. Concentric shrinking neon square tunnel (ticking clock feel)
         const dx = Math.abs(x - 64);
         const dy = Math.abs(y - 64);
@@ -366,7 +371,7 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
           g = Math.round(g * fade);
           b = Math.round(b * fade);
         }
-      } else if (type === 'blue_star_burst') {
+      } else if (renderType === 'blue_star_burst') {
         // 2. The "Tanzschein" (Dance Licence) Card & Stamp + Gazelle Mask in the center
         const dx = Math.abs(x - 64);
         const dy = Math.abs(y - 64);
@@ -404,7 +409,7 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
           g = Math.round(g * (1.0 - flash) + 255 * flash);
           b = Math.round(b * (1.0 - flash) + 255 * flash);
         }
-      } else if (type === 'quadrant_flashes') {
+      } else if (renderType === 'quadrant_flashes') {
         // 3. Glowing neon gorilla mask in the center + flashing quadrants
         const maskColor = drawCharacterMask('gorilla', x, y, time, beatProgress);
         
@@ -428,7 +433,26 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
           }
         }
 
-      } else if (type === 'laser_sweeps') {
+      } else if (renderType === 'quadrant_flashes_no_mask') {
+        // Same quadrant flash look as quadrant_flashes, but without the center mask.
+        let pixelQuad = 0;
+        if (x < 64 && y >= 64) pixelQuad = 0;
+        else if (x >= 64 && y >= 64) pixelQuad = 1;
+        else if (x < 64 && y < 64) pixelQuad = 2;
+        else pixelQuad = 3;
+
+        if (pixelQuad === beatInMeasure) {
+          const decay = 1 - beatProgress;
+          const accent = getLyricAccentAtTime(time);
+          r = Math.floor(accent[0] * decay);
+          g = Math.floor(accent[1] * decay);
+          b = Math.floor(accent[2] * decay);
+        } else {
+          r = 0;
+          g = 20;
+          b = 30;
+        }
+      } else if (renderType === 'laser_sweeps') {
         // 4. Rotating crossing laser tunnel + Lion Mask in the center (Pre-chorus)
         const maskColor = drawCharacterMask('lion', x, y, time, beatProgress);
         
@@ -475,7 +499,7 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
           }
 
         }
-      } else if (type === 'reactive_drop') {
+      } else if (renderType === 'reactive_drop') {
         // 5. Huge TANZ / SCHEIN stroboscopic text + equalizers
         const dx = x - 64;
         const dy = y - 64;
@@ -576,7 +600,7 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
 
 
       // EXTRA: Draw expanding shockwave circles of white sparkles on analyzed audio beat hits
-      if (isAudioImpact && type !== 'black' && !getLyricCueAtTime(time)) {
+      if (isAudioImpact && renderType !== 'black' && !getLyricCueAtTime(time)) {
         const dx = x - 64;
         const dy = y - 64;
         const dist = Math.sqrt(dx * dx + dy * dy);
@@ -979,6 +1003,13 @@ function isPixelInText(str: string, px: number, py: number, startX: number, star
   return (colByte & (1 << relY)) !== 0;
 }
 
+function getWallRenderType(type: string, time: number): string {
+  if (type === 'black') return type;
+  if (time >= REFRAIN_LYRICS_START && time < REFRAIN_LYRICS_END) return 'quadrant_flashes_no_mask';
+  if (time >= REFRAIN_LYRICS_END && time <= SHOW_END) return 'laser_sweeps';
+  return type;
+}
+
 function getLyricCueAtTime(time: number): LyricCue | null {
   return LYRIC_CUES.find((cue) => time >= cue.startTime && time < cue.endTime) ?? null;
 }
@@ -991,6 +1022,20 @@ function getHeyCueAtTime(time: number): LyricCue | null {
 function getTextLyricCueAtTime(time: number): LyricCue | null {
   const cue = getLyricCueAtTime(time);
   return cue && cue.kind !== 'hey' ? cue : null;
+}
+
+function getLyricAccentAtTime(time: number): readonly [number, number, number] {
+  const palette: readonly (readonly [number, number, number])[] = [
+    [0, 255, 255],   // cyan
+    [255, 0, 150],   // magenta
+    [235, 180, 45],  // gold
+    [80, 255, 120],  // green
+  ];
+  const cue = getTextLyricCueAtTime(time);
+  if (!cue) return [255, 0, 150];
+
+  const cueIndex = LYRIC_CUES.filter((item) => item.kind !== 'hey').indexOf(cue);
+  return palette[Math.max(0, cueIndex) % palette.length];
 }
 
 function getReadableScale(lines: readonly string[], preferredScale: number): number {
@@ -1038,14 +1083,7 @@ function getFinalLyricOverlayPixel(time: number, x: number, y: number, beatIdx: 
   const bandBottom = 95;
   if (y < bandTop || y > bandBottom) return null;
 
-  const palette = [
-    [0, 255, 255],   // cyan
-    [255, 0, 150],   // magenta
-    [235, 180, 45],  // gold
-    [80, 255, 120],  // green
-  ];
-  const cueIndex = LYRIC_CUES.filter((item) => item.kind !== 'hey').indexOf(cue);
-  const accent = palette[Math.max(0, cueIndex) % palette.length];
+  const accent = getLyricAccentAtTime(time);
   const invertActive = beatIdx % 2 === 0;
   const inText = isPixelInSequentialLyric(cue.lines, x, y, 3, elapsed);
 
