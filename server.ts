@@ -102,6 +102,29 @@ const BEAT_DURATION = 60 / BPM; // ~0.4615s
 const MEASURE_DURATION = BEAT_DURATION * 4; // ~1.846s
 const AUDIO_OFFSET = 0.1; // adjust if audio start has delay
 
+interface LyricCue {
+  startTime: number;
+  endTime: number;
+  lines: readonly [string] | readonly [string, string];
+  kind?: 'hey';
+}
+
+// The browser starts the local performance MP3 at 30s. The public synced lyric
+// timestamps line up after accounting for the video's pre-roll, and the two
+// "HEY HEY" cues below preserve the moments that are already correct live.
+const LYRIC_CUES: readonly LyricCue[] = [
+  { startTime: 9.2, endTime: 10.85, lines: ['HEY', 'HEY'], kind: 'hey' },
+  { startTime: 16.6, endTime: 18.25, lines: ['HEY', 'HEY'], kind: 'hey' },
+  { startTime: 23.35, endTime: 25.0, lines: ['TANZ', 'SCHEIN'] },
+  { startTime: 25.0, endTime: 27.35, lines: ['STRENG', 'SEIN'] },
+  { startTime: 27.35, endTime: 29.55, lines: ['TANZ', 'SCHEIN'] },
+  { startTime: 29.55, endTime: 30.95, lines: ['NICHT', 'REIN'] },
+  { startTime: 30.95, endTime: 33.15, lines: ['TANZ', 'SCHEIN'] },
+  { startTime: 33.15, endTime: 34.75, lines: ['WITZ', 'SEIN'] },
+  { startTime: 34.75, endTime: 37.05, lines: ['TANZ', 'SCHEIN'] },
+  { startTime: 37.05, endTime: 39.1, lines: ['NICHT', 'REIN'] },
+];
+
 let timelineBlocks: TimelineBlock[] = [
   { id: '16', lane: 'wall', startTime: 0, endTime: 3.0, type: 'laser_sweeps', name: 'Tanzschein Laser Sweeps' },
   { id: '17', lane: 'lyres', startTime: 0, endTime: 3.0, type: 'lyre_buildup_strobe', name: 'Lyres Strobe Crescendo' },
@@ -374,32 +397,6 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
           }
         }
 
-        // Verse 2 Lyrics overlay (20.0s..26.0s)
-        const inTextRibbon = y >= 42 && y < 87;
-        if (inTextRibbon) {
-          let lyric: { top: string; bottom: string } | null = null;
-          if (time >= 20.0 && time < 22.0) lyric = { top: "GAZELLE", bottom: "WILL TANZEN" };
-          else if (time >= 22.0 && time < 24.0) lyric = { top: "DER LOEWE", bottom: "WILL JAGEN" };
-          else if (time >= 24.0 && time < 26.0) lyric = { top: "HUNGER", bottom: "MACHT BOESE" };
-
-          if (lyric) {
-            const scale = 2;
-            const fontW_top = 7 * scale;
-            const startX_top = 64 - Math.round((lyric.top.length * fontW_top) / 2);
-            const startY_top = 76;
-            const inTextTop = isPixelInText(lyric.top, x, y, startX_top, startY_top, scale, 7);
-
-            const fontW_bottom = 7 * scale;
-            const startX_bottom = 64 - Math.round((lyric.bottom.length * fontW_bottom) / 2);
-            const startY_bottom = 58;
-            const inTextBottom = isPixelInText(lyric.bottom, x, y, startX_bottom, startY_bottom, scale, 7);
-
-            if (inTextTop || inTextBottom) {
-              r = 255; g = 255; b = 255; // White text
-            }
-          }
-        }
-
         // Transition White Flash Impact at the drop entry (from 5.9s to 6.15s)
         if (time >= 5.9 && time < 6.15) {
           const flash = 1.0 - (time - 5.9) / 0.25;
@@ -428,32 +425,6 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
             b = Math.floor(128 * decay); // Magenta flash
           } else {
             r = 0; g = 20; b = 30; // dim background
-          }
-        }
-
-        // Verse 2 Lyrics overlay part 2 (26.0s..32.0s)
-        const inTextRibbon = y >= 42 && y < 87;
-        if (inTextRibbon) {
-          let lyric: { top: string; bottom: string } | null = null;
-          if (time >= 26.0 && time < 28.0) lyric = { top: "AUF DIE", bottom: "PELLE" };
-          else if (time >= 28.0 && time < 30.0) lyric = { top: "IM GEHEGE", bottom: "WIE EINE SAEGE" };
-          else if (time >= 30.0 && time < 32.0) lyric = { top: "KEIN GEREDE", bottom: "ROMANTISCH" };
-
-          if (lyric) {
-            const scale = 2;
-            const fontW_top = 7 * scale;
-            const startX_top = 64 - Math.round((lyric.top.length * fontW_top) / 2);
-            const startY_top = 76;
-            const inTextTop = isPixelInText(lyric.top, x, y, startX_top, startY_top, scale, 7);
-
-            const fontW_bottom = 7 * scale;
-            const startX_bottom = 64 - Math.round((lyric.bottom.length * fontW_bottom) / 2);
-            const startY_bottom = 58;
-            const inTextBottom = isPixelInText(lyric.bottom, x, y, startX_bottom, startY_bottom, scale, 7);
-
-            if (inTextTop || inTextBottom) {
-              r = 255; g = 255; b = 255; // White text
-            }
           }
         }
 
@@ -503,24 +474,6 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
             r = 255; g = 255; b = 255;
           }
 
-          // Buildup 2 Lyrics overlay
-          const inTextRibbon = y >= 42 && y < 87;
-          if (inTextRibbon) {
-            let lyric: string | null = null;
-            if (time >= 32.0 && time < 35.0) lyric = "EIN KONZEPT";
-            else if (time >= 35.0 && time < 37.0) lyric = "PERFEKT!";
-            else if (time >= 37.0 && time < 40.0) lyric = "TANZSCHEIN...";
-
-            if (lyric) {
-              const scale = 2;
-              const fontW = 7 * scale;
-              const startX = 64 - Math.round((lyric.length * fontW) / 2);
-              const startY = 67;
-              if (isPixelInText(lyric, x, y, startX, startY, scale, 7)) {
-                r = 255; g = 255; b = 255; // White text
-              }
-            }
-          }
         }
       } else if (type === 'reactive_drop') {
         // 5. Huge TANZ / SCHEIN stroboscopic text + equalizers
@@ -541,21 +494,13 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
           let inText = false;
           const scale = 3;
 
-          let isHeyHeyTime = false;
-          let t1 = 0;
-          let t2 = -1; // disabled by default
+          const heyCue = getHeyCueAtTime(time);
+          let heyOpacity = 1;
 
-          if (time >= 9.2 && time < 10.4) {
-            isHeyHeyTime = true;
-            t1 = time - 9.2;
-            t2 = time - 9.9;
-          } else if (time >= 16.6 && time < 17.8) {
-            isHeyHeyTime = true;
-            t1 = time - 16.6;
-            t2 = time - 17.3;
-          }
-
-          if (isHeyHeyTime) {
+          if (heyCue) {
+            const t1 = time - heyCue.startTime;
+            const t2 = time - (heyCue.startTime + 0.7);
+            heyOpacity = Math.max(0, Math.min(1, (heyCue.endTime - time) / 0.5));
             // Sliding HEY HEY animation
             // 1. Top "HEY" (slides from left)
             const targetX1 = 32;
@@ -575,43 +520,11 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
               if (t2 < 0.25) {
                 startX2 = Math.round(128 - 96 * (t2 / 0.25));
               }
-              inText2 = isPixelInText("HEY", x, y, startX2, startY2, scale, 7);
+              inText2 = isPixelInText("HEY!", x, y, startX2, startY2, scale, 7);
             }
             inText = inText1 || inText2;
           } else {
-            // Normal drop lyrics
-            let lyric: { top: string; bottom: string } | null = null;
-            
-            if (time >= 3.0 && time < 4.8) lyric = { top: "TANZ", bottom: "SCHEIN" };
-            else if (time >= 4.8 && time < 6.7) lyric = { top: "STRENG", bottom: "SEIN" };
-            else if (time >= 6.7 && time < 8.5) lyric = { top: "OHNE", bottom: "SCHEIN" };
-            else if (time >= 8.5 && time < 9.2) lyric = { top: "NICHT", bottom: "REIN" }; // Shortened for HEY HEY
-            else if (time >= 10.4 && time < 12.2) lyric = { top: "JEDEN TAG", bottom: "SEIN" };
-            else if (time >= 12.2 && time < 14.1) lyric = { top: "DURCH DIE", bottom: "NACHT" };
-            else if (time >= 14.1 && time < 15.9) lyric = { top: "KEINE", bottom: "LOEWEN" };
-            else if (time >= 15.9 && time < 16.6) lyric = { top: "NICHT", bottom: "REIN" }; // Shortened for HEY HEY
-            else if (time >= 17.8 && time < 19.0) lyric = { top: "JEDEN TAG", bottom: "SEIN" };
-            else if (time >= 19.0 && time <= 20.0) lyric = { top: "TANZEN!", bottom: "" };
-            // Drop 2 lyrics (DMX 40s to 45s)
-            else if (time >= 40.0 && time < 41.8) lyric = { top: "TANZ", bottom: "SCHEIN" };
-            else if (time >= 41.8 && time < 43.7) lyric = { top: "STRENG", bottom: "SEIN" };
-            else if (time >= 43.7 && time <= 45.0) lyric = { top: "OHNE", bottom: "SCHEIN" };
-
-            if (lyric) {
-              const fontW_top = 7 * scale;
-              const startX_top = 64 - Math.round((lyric.top.length * fontW_top) / 2);
-              const startY_top = lyric.bottom ? 88 : 75;
-              const inTextTop = isPixelInText(lyric.top, x, y, startX_top, startY_top, scale, 7);
-
-              let inTextBottom = false;
-              if (lyric.bottom) {
-                const fontW_bottom = 7 * scale;
-                const startX_bottom = 64 - Math.round((lyric.bottom.length * fontW_bottom) / 2);
-                const startY_bottom = 62;
-                inTextBottom = isPixelInText(lyric.bottom, x, y, startX_bottom, startY_bottom, scale, 7);
-              }
-              inText = inTextTop || inTextBottom;
-            }
+            inText = false;
           }
 
           const invertActive = beatIdx % 2 === 0;
@@ -632,6 +545,12 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
             } else {
               r = 0; g = 0; b = 0; // Black background
             }
+          }
+
+          if (heyCue && heyOpacity < 1) {
+            r = Math.round(r * heyOpacity);
+            g = Math.round(g * heyOpacity);
+            b = Math.round(b * heyOpacity);
           }
         } else {
           // C. Outside the ribbon: draw mirrored equalizer bars at top and bottom
@@ -657,7 +576,7 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
 
 
       // EXTRA: Draw expanding shockwave circles of white sparkles on analyzed audio beat hits
-      if (isAudioImpact && type !== 'black') {
+      if (isAudioImpact && type !== 'black' && !getLyricCueAtTime(time)) {
         const dx = x - 64;
         const dy = y - 64;
         const dist = Math.sqrt(dx * dx + dy * dy);
@@ -665,6 +584,13 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
         if (dist > 52 && dist < 58 && Math.random() > 0.35) {
           r = 255; g = 255; b = 255; // Sparkling white impact halo!
         }
+      }
+
+      const lyricOverlay = getFinalLyricOverlayPixel(time, x, y, beatIdx);
+      if (lyricOverlay) {
+        r = lyricOverlay.r;
+        g = lyricOverlay.g;
+        b = lyricOverlay.b;
       }
 
       // Write directly to universe buffers
@@ -1053,41 +979,146 @@ function isPixelInText(str: string, px: number, py: number, startX: number, star
   return (colByte & (1 << relY)) !== 0;
 }
 
+function getLyricCueAtTime(time: number): LyricCue | null {
+  return LYRIC_CUES.find((cue) => time >= cue.startTime && time < cue.endTime) ?? null;
+}
+
+function getHeyCueAtTime(time: number): LyricCue | null {
+  const cue = getLyricCueAtTime(time);
+  return cue?.kind === 'hey' ? cue : null;
+}
+
+function getTextLyricCueAtTime(time: number): LyricCue | null {
+  const cue = getLyricCueAtTime(time);
+  return cue && cue.kind !== 'hey' ? cue : null;
+}
+
+function getReadableScale(lines: readonly string[], preferredScale: number): number {
+  const maxLen = Math.max(...lines.map((line) => line.length));
+  if (maxLen <= 6) return preferredScale;
+  if (maxLen <= 9) return Math.min(preferredScale, 2);
+  return 1;
+}
+
+function isPixelInCenteredLyric(lines: readonly string[], x: number, y: number, preferredScale: number, elapsed: number = 1): boolean {
+  const scale = getReadableScale(lines, preferredScale);
+  const spacingWidth = 7;
+  const fontWidth = spacingWidth * scale;
+  const entrance = Math.max(0, Math.min(1, elapsed / 0.22));
+  const yOffset = Math.round((1 - entrance) * -7);
+  const ySlots = lines.length === 1
+    ? [scale >= 3 ? 75 : scale === 2 ? 67 : 65]
+    : scale >= 3
+      ? [88, 62]
+      : scale === 2
+        ? [76, 58]
+        : [72, 61];
+
+  return lines.some((line, idx) => {
+    const startX = 64 - Math.round((line.length * fontWidth) / 2);
+    const startY = (ySlots[idx] ?? ySlots[0]) + yOffset;
+    const inText = isPixelInText(line, x, y, startX, startY, scale, spacingWidth);
+    if (!inText) return false;
+
+    if (entrance < 1) {
+      const revealNoise = ((x * 17 + y * 31) % 100) / 100;
+      return revealNoise <= entrance;
+    }
+
+    return true;
+  });
+}
+
+function getFinalLyricOverlayPixel(time: number, x: number, y: number, beatIdx: number): { r: number; g: number; b: number } | null {
+  const cue = getTextLyricCueAtTime(time);
+  if (!cue) return null;
+
+  const elapsed = time - cue.startTime;
+  const bandTop = 36;
+  const bandBottom = 95;
+  if (y < bandTop || y > bandBottom) return null;
+
+  const palette = [
+    [0, 255, 255],   // cyan
+    [255, 0, 150],   // magenta
+    [235, 180, 45],  // gold
+    [80, 255, 120],  // green
+  ];
+  const cueIndex = LYRIC_CUES.filter((item) => item.kind !== 'hey').indexOf(cue);
+  const accent = palette[Math.max(0, cueIndex) % palette.length];
+  const invertActive = beatIdx % 2 === 0;
+  const inText = isPixelInSequentialLyric(cue.lines, x, y, 3, elapsed);
+
+  const bandOn = elapsed > 0.04;
+  if (!bandOn && !inText) return null;
+
+  if (inText) {
+    return invertActive
+      ? { r: 4, g: 4, b: 10 }
+      : { r: accent[0], g: accent[1], b: accent[2] };
+  }
+
+  const border = y === bandTop || y === bandBottom || y === bandTop + 1 || y === bandBottom - 1;
+  const scan = Math.floor((x + time * 90) / 8) % 8 === 0;
+
+  if (invertActive) {
+    const boost = border || scan ? 1 : 0.55;
+    return {
+      r: Math.round(accent[0] * boost),
+      g: Math.round(accent[1] * boost),
+      b: Math.round(accent[2] * boost),
+    };
+  }
+
+  if (border || scan) {
+    return {
+      r: Math.round(accent[0] * 0.7),
+      g: Math.round(accent[1] * 0.7),
+      b: Math.round(accent[2] * 0.7),
+    };
+  }
+
+  return { r: 2, g: 3, b: 12 };
+}
+
+function isPixelInSequentialLyric(lines: readonly string[], x: number, y: number, preferredScale: number, elapsed: number): boolean {
+  const scale = getReadableScale(lines, preferredScale);
+  const spacingWidth = 7;
+  const fontWidth = spacingWidth * scale;
+  const ySlots = lines.length === 1
+    ? [scale >= 3 ? 75 : scale === 2 ? 67 : 65]
+    : scale >= 3
+      ? [88, 62]
+      : scale === 2
+        ? [76, 58]
+        : [72, 61];
+
+  return lines.some((line, idx) => {
+    const delay = idx * 0.32;
+    const progress = Math.max(0, Math.min(1, (elapsed - delay) / 0.22));
+    if (progress <= 0) return false;
+
+    const startX = 64 - Math.round((line.length * fontWidth) / 2);
+    const startY = (ySlots[idx] ?? ySlots[0]) - Math.round((1 - progress) * 5);
+    const width = line.length * fontWidth;
+    const dx = x - startX;
+    if (dx < 0 || dx > width * progress) return false;
+
+    if (!isPixelInText(line, x, y, startX, startY, scale, spacingWidth)) return false;
+
+    if (progress < 0.95 && ((x * 11 + y * 7) % 17) / 17 > progress) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
 
 
 // Maps timeline playback progress to song lyrics
 function getLyricsAtTime(time: number): string {
-  if (time >= 0 && time < 3.0) return "TANZSCHEIN...";
-  
-  if (time >= 3.0 && time < 4.8) return "TANZSCHEIN";
-  if (time >= 4.8 && time < 6.7) return "STRENG SEIN";
-  if (time >= 6.7 && time < 8.5) return "OHNE SCHEIN";
-  if (time >= 8.5 && time < 9.2) return "NICHT REIN";
-  if (time >= 9.2 && time < 10.4) return "HEY HEY";
-  if (time >= 10.4 && time < 12.2) return "JEDEN TAG SEIN";
-  if (time >= 12.2 && time < 14.1) return "DURCH DIE NACHT";
-  if (time >= 14.1 && time < 15.9) return "KEINE LOEWEN";
-  if (time >= 15.9 && time < 16.6) return "NICHT REIN";
-  if (time >= 16.6 && time < 17.8) return "HEY HEY";
-  if (time >= 17.8 && time < 19.0) return "JEDEN TAG SEIN";
-  if (time >= 19.0 && time < 20.0) return "TANZEN!";
-  
-  if (time >= 20.0 && time < 22.0) return "GAZELLE TANZEN";
-  if (time >= 22.0 && time < 24.0) return "DER LOEWE JAGEN";
-  if (time >= 24.0 && time < 26.0) return "HUNGER BOESE";
-  if (time >= 26.0 && time < 28.0) return "SUR LA PELLE";
-  if (time >= 28.0 && time < 30.0) return "WIE EINE SAEGE";
-  if (time >= 30.0 && time < 32.0) return "KEIN GEREDE";
-  
-  if (time >= 32.0 && time < 35.0) return "EIN KONZEPT";
-  if (time >= 35.0 && time < 37.0) return "PERFEKT!";
-  if (time >= 37.0 && time < 40.0) return "TANZSCHEIN...";
-  
-  if (time >= 40.0 && time < 41.8) return "TANZSCHEIN";
-  if (time >= 41.8 && time < 43.7) return "STRENG SEIN";
-  if (time >= 43.7 && time <= 45.0) return "OHNE SCHEIN";
-  
-  return "";
+  return getLyricCueAtTime(time)?.lines.join(' ') ?? "";
 }
 
 function applyInteractiveOverrides(key: string, time: number) {
