@@ -5,14 +5,44 @@ import { synthInstance } from './components/AudioEngine.ts';
 import { analyzeAudioBeats } from './components/AudioAnalyzer.ts';
 import { ImageStudio } from './components/ImageStudio.tsx';
 
-interface TimelineBlock {
-  id: string;
-  lane: 'wall' | 'lyres' | 'static';
-  startTime: number;
-  endTime: number;
-  type: string;
-  name: string;
-}
+const LANE_LABELS: Record<TimelineBlock['lane'], string> = {
+  wall: 'LED Wall Lane',
+  lyres: 'Moving Heads',
+  static: 'Static Spotlight',
+};
+
+const LANE_COLORS: Record<TimelineBlock['lane'], { bg: string; border: string; badge: string }> = {
+  wall: { bg: 'rgba(230, 20, 30, 0.25)', border: 'var(--color-red)', badge: 'badge-red' },
+  lyres: { bg: 'rgba(235, 180, 45, 0.2)', border: 'var(--color-gold)', badge: 'badge-gold' },
+  static: { bg: 'rgba(59, 130, 246, 0.25)', border: 'var(--color-cyan)', badge: 'badge-cyan' },
+};
+
+const EFFECT_OPTIONS: Record<TimelineBlock['lane'], { value: string; label: string }[]> = {
+  wall: [
+    { value: 'black', label: 'Blackout' },
+    { value: 'guitar_intro', label: 'Guitar Intro' },
+    { value: 'intro_ticks', label: 'Intro Ticks' },
+    { value: 'blue_star_burst', label: 'COSMO Blue Star' },
+    { value: 'quadrant_flashes', label: 'Quadrant Flash' },
+    { value: 'laser_sweeps', label: 'Tanzschein Lasers' },
+    { value: 'reactive_drop', label: 'Tanzschein Drop' },
+  ],
+  lyres: [
+    { value: 'black', label: 'Lyres Off' },
+    { value: 'lyre_intro', label: 'Intro Silver Sweep' },
+    { value: 'lyre_kick_pulse', label: 'Lyres Kick Snap' },
+    { value: 'lyre_circle_color', label: 'Lyres Color Circle' },
+    { value: 'lyre_buildup_strobe', label: 'Lyres Buildup Strobe' },
+    { value: 'lyre_drop_trap', label: 'Lyres Mirrored Chases' },
+  ],
+  static: [
+    { value: 'static_off', label: 'Spotlight Off' },
+    { value: 'static_measure_pulse', label: 'Spot Blue Pulse' },
+    { value: 'static_snare_flash', label: 'Spot Magenta Snare' },
+    { value: 'static_dimmer_rise', label: 'Spot Dimmer Rise' },
+    { value: 'static_drop_strobe', label: 'Spot Strobe Drop' },
+  ],
+};
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'timeline' | 'images' | 'config'>('dashboard');
@@ -76,6 +106,7 @@ export default function App() {
 
   const wsRef = useRef<WebSocket | null>(null);
   const currentTimeRef = useRef(0);
+  const importShowFileRef = useRef<HTMLInputElement | null>(null);
 
   const [pingStatus, setPingStatus] = useState<Record<string, { status: string; latency: string }>>({});
   const [isPinging, setIsPinging] = useState(false);
@@ -129,6 +160,9 @@ export default function App() {
         const msg = JSON.parse(event.data);
         if (msg.type === 'config') {
           setConfig(msg.data);
+        } else if (msg.type === 'timeline') {
+          setBlocks(msg.data);
+          setShowDirty(false);
         } else if (msg.type === 'telemetry') {
           setTelemetry(msg.data);
         } else if (msg.type === 'frame') {
@@ -260,6 +294,130 @@ export default function App() {
     }
   };
 
+  const sortTimelineBlocks = (nextBlocks: TimelineBlock[]) => (
+    [...nextBlocks].sort((a, b) => a.startTime - b.startTime || a.lane.localeCompare(b.lane))
+  );
+
+  const updateSelectedBlock = (patch: Partial<TimelineBlock>) => {
+    if (!selectedBlockId) return;
+
+    setBlocks((prev) => sortTimelineBlocks(prev.map((block) => {
+      if (block.id !== selectedBlockId) return block;
+
+      const next = { ...block, ...patch };
+      const startTime = Math.max(0, Math.min(SHOW_DURATION_SECONDS - 0.1, Number(next.startTime) || 0));
+      const endTime = Math.max(startTime + 0.1, Math.min(SHOW_DURATION_SECONDS, Number(next.endTime) || startTime + 1));
+
+      return {
+        ...next,
+        startTime: Number(startTime.toFixed(2)),
+        endTime: Number(endTime.toFixed(2)),
+      };
+    })));
+    setShowDirty(true);
+  };
+
+  const addTimelineBlock = (lane: TimelineBlock['lane']) => {
+    const defaultEffect = EFFECT_OPTIONS[lane][0];
+    const startTime = Math.min(Math.max(0, currentTime), SHOW_DURATION_SECONDS - 1);
+    const block: TimelineBlock = {
+      id: `block-${Date.now()}`,
+      lane,
+      startTime: Number(startTime.toFixed(2)),
+      endTime: Number(Math.min(SHOW_DURATION_SECONDS, startTime + 2).toFixed(2)),
+      type: defaultEffect.value,
+      name: defaultEffect.label,
+    };
+
+    setBlocks((prev) => sortTimelineBlocks([...prev, block]));
+    setSelectedBlockId(block.id);
+    setShowDirty(true);
+  };
+
+  const duplicateSelectedBlock = () => {
+    const block = blocks.find((item) => item.id === selectedBlockId);
+    if (!block) return;
+
+    const duration = block.endTime - block.startTime;
+    const startTime = Math.min(SHOW_DURATION_SECONDS - duration, block.endTime);
+    const duplicate = {
+      ...block,
+      id: `block-${Date.now()}`,
+      startTime: Number(startTime.toFixed(2)),
+      endTime: Number((startTime + duration).toFixed(2)),
+      name: `${block.name} Copy`,
+    };
+
+    setBlocks((prev) => sortTimelineBlocks([...prev, duplicate]));
+    setSelectedBlockId(duplicate.id);
+    setShowDirty(true);
+  };
+
+  const deleteSelectedBlock = () => {
+    if (!selectedBlockId) return;
+    setBlocks((prev) => prev.filter((block) => block.id !== selectedBlockId));
+    setSelectedBlockId(null);
+    setShowDirty(true);
+  };
+
+  const saveShow = async () => {
+    try {
+      const res = await fetch('/api/show', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ blocks }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setBlocks(data.blocks);
+        setShowDirty(false);
+        addLog(`Show timeline saved: ${data.blocks.length} segments.`);
+      } else {
+        addLog(`Error saving show: ${data.error}`);
+      }
+    } catch (e) {
+      addLog(`Failed to save show: ${(e as Error).message}`);
+    }
+  };
+
+  const resetShow = async () => {
+    try {
+      const res = await fetch('/api/show/reset', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setBlocks(data.blocks);
+        setSelectedBlockId(null);
+        setShowDirty(false);
+        addLog('Show timeline reset to default sequence.');
+      } else {
+        addLog(`Error resetting show: ${data.error}`);
+      }
+    } catch (e) {
+      addLog(`Failed to reset show: ${(e as Error).message}`);
+    }
+  };
+
+  const importShow = async (file: File) => {
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const importedBlocks = Array.isArray(parsed) ? parsed : parsed.blocks;
+      if (!Array.isArray(importedBlocks)) {
+        throw new Error('JSON must contain a blocks array.');
+      }
+      setBlocks(sortTimelineBlocks(importedBlocks));
+      setSelectedBlockId(null);
+      setShowDirty(true);
+      addLog(`Imported ${importedBlocks.length} show segments. Save to apply on backend.`);
+    } catch (e) {
+      addLog(`Failed to import show: ${(e as Error).message}`);
+    } finally {
+      if (importShowFileRef.current) {
+        importShowFileRef.current.value = '';
+      }
+    }
+  };
+
   const saveConfig = async () => {
     try {
       const res = await fetch('/api/config', {
@@ -275,6 +433,73 @@ export default function App() {
       }
     } catch (e) {
       addLog(`Failed to connect to backend: ${(e as Error).message}`);
+    }
+  };
+
+  const updateLedWallConfig = (key: string, value: number) => {
+    setConfig((prev: any) => ({
+      ...prev,
+      ledWall: {
+        ...prev.ledWall,
+        [key]: value,
+      },
+    }));
+  };
+
+  const updateMovingHeadsConfig = (key: string, value: number) => {
+    setConfig((prev: any) => ({
+      ...prev,
+      fixtures: {
+        ...prev.fixtures,
+        movingHeads: {
+          ...prev.fixtures?.movingHeads,
+          [key]: value,
+        },
+      },
+    }));
+  };
+
+  const deriveLedWallWiringFromSize = () => {
+    setConfig((prev: any) => {
+      const ledWall = prev.ledWall || {};
+      const visibleWidth = Math.max(1, Number(ledWall.visibleWidth) || 128);
+      const visibleHeight = Math.max(1, Number(ledWall.visibleHeight) || 128);
+      const hiddenStartLeds = Math.max(0, Number(ledWall.hiddenStartLeds) || 0);
+      const hiddenBetweenRunsLeds = Math.max(0, Number(ledWall.hiddenBetweenRunsLeds) || 0);
+      const hiddenEndLeds = Math.max(0, Number(ledWall.hiddenEndLeds) || 0);
+
+      return {
+        ...prev,
+        ledWall: {
+          ...ledWall,
+          strips: Math.ceil(visibleWidth / 2),
+          ledsPerStrip: visibleHeight * 2 + hiddenStartLeds + hiddenBetweenRunsLeds + hiddenEndLeds,
+        },
+      };
+    });
+    addLog('Derived strip count and LEDs per strip from visible wall size.');
+  };
+
+  const regeneratePhysicalMapping = async () => {
+    try {
+      const res = await fetch('/api/config/regenerate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ledWall: config.ledWall,
+          fixtures: config.fixtures,
+          controllerIps: config.controllers.map((ctrl: any) => ctrl.ip),
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setConfig(data.config);
+        addLog(`Regenerated mapping: ${data.summary.totalEntities} entities, ${data.summary.controllers} controllers.`);
+      } else {
+        addLog(`Error regenerating mapping: ${data.error}`);
+      }
+    } catch (e) {
+      addLog(`Failed to regenerate mapping: ${(e as Error).message}`);
     }
   };
 
@@ -611,8 +836,17 @@ export default function App() {
             
             <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h3 style={{ fontSize: '1.1rem' }}>Show Sequence Ruler</h3>
-                <span className="badge badge-gold">Track: COSMÓ - Tanzschein (45s Showcase - Eurovision 2026)</span>
+                <div>
+                  <h3 style={{ fontSize: '1.1rem' }}>Show Authoring Timeline</h3>
+                  <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Track: COSMÓ - Tanzschein ({SHOW_DURATION_SECONDS}s)</span>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  <span className={`badge ${showDirty ? 'badge-red' : 'badge-green'}`}>{showDirty ? 'UNSAVED' : 'SAVED'}</span>
+                  <button className="secondary" onClick={() => addTimelineBlock('wall')} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Plus size={15} /> Wall</button>
+                  <button className="secondary" onClick={() => addTimelineBlock('lyres')} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Plus size={15} /> Lyres</button>
+                  <button className="secondary" onClick={() => addTimelineBlock('static')} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Plus size={15} /> Spot</button>
+                  <button onClick={saveShow}>Save Show</button>
+                </div>
               </div>
  
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', backgroundColor: 'var(--bg-base)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-accent)' }}>
@@ -626,8 +860,8 @@ export default function App() {
                         onClick={() => setSelectedBlockId(b.id)}
                         style={{
                           position: 'absolute',
-                          left: `${(b.startTime / 45) * 100}%`,
-                          width: `${((b.endTime - b.startTime) / 45) * 100}%`,
+                          left: `${(b.startTime / SHOW_DURATION_SECONDS) * 100}%`,
+                          width: `${((b.endTime - b.startTime) / SHOW_DURATION_SECONDS) * 100}%`,
                           height: '100%',
                           backgroundColor: 'rgba(230, 20, 30, 0.25)',
                           border: selectedBlockId === b.id ? '2px solid var(--color-red)' : '1px solid var(--color-red)',
@@ -656,8 +890,8 @@ export default function App() {
                         onClick={() => setSelectedBlockId(b.id)}
                         style={{
                           position: 'absolute',
-                          left: `${(b.startTime / 45) * 100}%`,
-                          width: `${((b.endTime - b.startTime) / 45) * 100}%`,
+                          left: `${(b.startTime / SHOW_DURATION_SECONDS) * 100}%`,
+                          width: `${((b.endTime - b.startTime) / SHOW_DURATION_SECONDS) * 100}%`,
                           height: '100%',
                           backgroundColor: 'rgba(235, 180, 45, 0.2)',
                           border: selectedBlockId === b.id ? '2px solid var(--color-gold)' : '1px solid var(--color-gold)',
@@ -686,8 +920,8 @@ export default function App() {
                         onClick={() => setSelectedBlockId(b.id)}
                         style={{
                           position: 'absolute',
-                          left: `${(b.startTime / 45) * 100}%`,
-                          width: `${((b.endTime - b.startTime) / 45) * 100}%`,
+                          left: `${(b.startTime / SHOW_DURATION_SECONDS) * 100}%`,
+                          width: `${((b.endTime - b.startTime) / SHOW_DURATION_SECONDS) * 100}%`,
                           height: '100%',
                           backgroundColor: 'rgba(59, 130, 246, 0.25)',
                           border: selectedBlockId === b.id ? '2px solid var(--color-cyan)' : '1px solid var(--color-cyan)',
@@ -711,7 +945,7 @@ export default function App() {
                   <input
                     type="range"
                     min={0}
-                    max={45}
+                    max={SHOW_DURATION_SECONDS}
                     step={0.1}
                     value={currentTime}
                     disabled // Driven strictly by server playback loop
@@ -733,17 +967,10 @@ export default function App() {
             {selectedBlockId && (
               <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3 style={{ fontSize: '1.1rem' }}>Edit Animation Segment</h3>
-                  <button
-                    style={{ backgroundColor: '#dc2626', color: '#fff', padding: '6px 12px', fontSize: '0.8rem' }}
-                    onClick={() => {
-                      setBlocks(prev => prev.filter(b => b.id !== selectedBlockId));
-                      setSelectedBlockId(null);
-                      addLog('Removed block from timeline.');
-                    }}
-                  >
-                    <Trash2 size={14} style={{ display: 'inline', marginRight: '4px' }} /> Delete Block
-                  </button>
+                  <h3 style={{ fontSize: '1.1rem' }}>Animation Segment</h3>
+                  <span className={`badge ${LANE_COLORS[blocks.find(b => b.id === selectedBlockId)?.lane || 'wall'].badge}`}>
+                    {LANE_LABELS[blocks.find(b => b.id === selectedBlockId)?.lane || 'wall']}
+                  </span>
                 </div>
 
                 {(() => {
@@ -756,45 +983,40 @@ export default function App() {
                         <input
                           type="text"
                           value={block.name}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setBlocks(prev => prev.map(b => b.id === block.id ? { ...b, name: val } : b));
-                          }}
+                          onChange={(event) => updateSelectedBlock({ name: event.target.value })}
                         />
+
+                        <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Target Lane</label>
+                        <select
+                          value={block.lane}
+                          onChange={(event) => {
+                            const lane = event.target.value as TimelineBlock['lane'];
+                            updateSelectedBlock({
+                              lane,
+                              type: EFFECT_OPTIONS[lane][0].value,
+                              name: EFFECT_OPTIONS[lane][0].label,
+                            });
+                          }}
+                        >
+                          <option value="wall">LED Wall</option>
+                          <option value="lyres">Moving Heads</option>
+                          <option value="static">Static Spotlight</option>
+                        </select>
 
                         <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Animation Pattern</label>
                         <select
                           value={block.type}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setBlocks(prev => prev.map(b => b.id === block.id ? { ...b, type: val } : b));
+                          onChange={(event) => {
+                            const selectedEffect = EFFECT_OPTIONS[block.lane].find((effect) => effect.value === event.target.value);
+                            updateSelectedBlock({
+                              type: event.target.value,
+                              name: selectedEffect?.label || block.name,
+                            });
                           }}
                         >
-                          {block.lane === 'wall' ? (
-                            <>
-                              <option value="intro_ticks">Intro Ticks</option>
-                              <option value="blue_star_burst">COSMÓ Blue Star</option>
-                              <option value="quadrant_flashes">Quadrant Flash</option>
-                              <option value="laser_sweeps">Tanzschein Lasers</option>
-                              <option value="reactive_drop">Tanzschein Drop</option>
-                            </>
-                          ) : block.lane === 'lyres' ? (
-                            <>
-                              <option value="lyre_intro">Intro Silver Sweep</option>
-                              <option value="lyre_kick_pulse">Lyres Kick Snap</option>
-                              <option value="lyre_circle_color">Lyres Color Circle</option>
-                              <option value="lyre_buildup_strobe">Lyres Buildup Strobe</option>
-                              <option value="lyre_drop_trap">Lyres Mirrored Chases</option>
-                            </>
-                          ) : (
-                            <>
-                              <option value="static_off">Spotlight Off</option>
-                              <option value="static_measure_pulse">Spot Blue Pulse</option>
-                              <option value="static_snare_flash">Spot Magenta Snare</option>
-                              <option value="static_dimmer_rise">Spot Dimmer Rise</option>
-                              <option value="static_drop_strobe">Spot Strobe Drop</option>
-                            </>
-                          )}
+                          {EFFECT_OPTIONS[block.lane].map((effect) => (
+                            <option key={effect.value} value={effect.value}>{effect.label}</option>
+                          ))}
                         </select>
                       </div>
 
@@ -803,21 +1025,36 @@ export default function App() {
                         <input
                           type="number"
                           step={0.1}
+                          min={0}
+                          max={SHOW_DURATION_SECONDS}
                           value={block.startTime}
-                          onChange={(e) => {
-                            const val = parseFloat(e.target.value);
-                            setBlocks(prev => prev.map(b => b.id === block.id ? { ...b, startTime: val } : b));
-                          }}
+                          onChange={(event) => updateSelectedBlock({ startTime: Number(event.target.value) })}
                         />
 
                         <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>End Time (seconds)</label>
                         <input
                           type="number"
                           step={0.1}
+                          min={0.1}
+                          max={SHOW_DURATION_SECONDS}
                           value={block.endTime}
-                          onChange={(e) => {
-                            const val = parseFloat(e.target.value);
-                            setBlocks(prev => prev.map(b => b.id === block.id ? { ...b, endTime: val } : b));
+                          onChange={(event) => updateSelectedBlock({ endTime: Number(event.target.value) })}
+                        />
+
+                        <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Quick Position</label>
+                        <input
+                          type="range"
+                          min={0}
+                          max={SHOW_DURATION_SECONDS}
+                          step={0.1}
+                          value={block.startTime}
+                          onChange={(event) => {
+                            const duration = block.endTime - block.startTime;
+                            const startTime = Number(event.target.value);
+                            updateSelectedBlock({
+                              startTime,
+                              endTime: Math.min(SHOW_DURATION_SECONDS, startTime + duration),
+                            });
                           }}
                         />
                       </div>
@@ -833,6 +1070,72 @@ export default function App() {
 
         {activeTab === 'config' && config && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', flex: 1 }}>
+            <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <div>
+                  <h3 style={{ fontSize: '1.1rem' }}>Adaptable LED Wall Layout</h3>
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', marginTop: '4px' }}>
+                    Change la taille visible, le nombre de bandes ou les appareils, puis régénère le mapping physique.
+                  </p>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <span className="badge badge-cyan">{config.ledWall?.visibleWidth}x{config.ledWall?.visibleHeight}px</span>
+                  <span className="badge badge-gold">{Object.keys(config.entityMap || {}).length} entities</span>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+                {[
+                  ['visibleWidth', 'Visible width'],
+                  ['visibleHeight', 'Visible height'],
+                  ['strips', 'LED strips'],
+                  ['ledsPerStrip', 'LEDs per strip'],
+                  ['stripsPerController', 'Strips/controller'],
+                  ['hiddenStartLeds', 'Hidden start LEDs'],
+                  ['hiddenBetweenRunsLeds', 'Hidden top LEDs'],
+                  ['hiddenEndLeds', 'Hidden end LEDs'],
+                ].map(([key, label]) => (
+                  <label key={key} style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                    {label}
+                    <input
+                      type="number"
+                      min={key === 'hiddenStartLeds' || key === 'hiddenBetweenRunsLeds' || key === 'hiddenEndLeds' ? 0 : 1}
+                      value={config.ledWall?.[key] ?? 0}
+                      onChange={(e) => updateLedWallConfig(key, parseInt(e.target.value, 10) || 0)}
+                    />
+                  </label>
+                ))}
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  Moving heads count
+                  <input
+                    type="number"
+                    min={0}
+                    value={config.fixtures?.movingHeads?.count ?? 0}
+                    onChange={(e) => updateMovingHeadsConfig('count', parseInt(e.target.value, 10) || 0)}
+                  />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  Moving head channels
+                  <input
+                    type="number"
+                    min={1}
+                    value={config.fixtures?.movingHeads?.channelsPerFixture ?? 13}
+                    onChange={(e) => updateMovingHeadsConfig('channelsPerFixture', parseInt(e.target.value, 10) || 13)}
+                  />
+                </label>
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <button className="secondary" onClick={deriveLedWallWiringFromSize}>Derive wiring from size</button>
+                <button onClick={regeneratePhysicalMapping}>Regenerate physical mapping</button>
+                <span style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>
+                  Recalcule contrôleurs, univers et entityMap depuis la géométrie actuelle.
+                </span>
+              </div>
+            </div>
             
             <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
