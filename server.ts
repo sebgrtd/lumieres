@@ -17,6 +17,9 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
+const LED_WALL_WIDTH = 128;
+const LED_WALL_HEIGHT = 128;
+
 const httpServer = createServer(app);
 const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
 
@@ -178,10 +181,11 @@ let currentTelemetry = {
 };
 
 let activeTestPattern: { type: 'controller' | 'all'; controllerIdx?: number; color?: number[] } | null = null;
+let activeImageFrame: { width: number; height: number; rgba: Uint8Array } | null = null;
 
 // 40Hz Main Loop Manager
 function updateRouterState() {
-  const needsLoop = isPlaying || activeOverride !== null || activeTestPattern !== null;
+  const needsLoop = isPlaying || activeOverride !== null || activeTestPattern !== null || activeImageFrame !== null;
 
   if (needsLoop) {
     if (!routeInterval) {
@@ -204,7 +208,9 @@ function updateRouterState() {
         }
 
         // 2. Evaluate active blocks & generate DMX values
-        if (activeTestPattern) {
+        if (activeImageFrame) {
+          evaluateImageFrame(activeImageFrame);
+        } else if (activeTestPattern) {
           if (activeTestPattern.type === 'controller') {
             const ctrl = activeConfig.controllers[activeTestPattern.controllerIdx!];
             if (ctrl) {
@@ -1457,6 +1463,42 @@ function sendPreviewToClients() {
   });
 }
 
+function getWallDimensions() {
+  const configAny = activeConfig as any;
+  const width = Number(configAny?.ledWall?.visibleWidth);
+  const height = Number(configAny?.ledWall?.visibleHeight);
+
+  return {
+    width: Number.isFinite(width) && width > 0 ? Math.round(width) : LED_WALL_WIDTH,
+    height: Number.isFinite(height) && height > 0 ? Math.round(height) : LED_WALL_HEIGHT,
+  };
+}
+
+function evaluateImageFrame(frame: { width: number; height: number; rgba: Uint8Array }) {
+  const { width: visibleWidth, height: visibleHeight } = getWallDimensions();
+
+  for (let physicalX = 0; physicalX < LED_WALL_WIDTH; physicalX++) {
+    for (let physicalY = 0; physicalY < LED_WALL_HEIGHT; physicalY++) {
+      const id = getEntityIdFromGrid(physicalX, LED_WALL_HEIGHT - 1 - physicalY);
+      const target = activeConfig.entityMap[id];
+      if (!target) continue;
+
+      const srcX = Math.min(frame.width - 1, Math.floor((physicalX / visibleWidth) * frame.width));
+      const srcY = Math.min(frame.height - 1, Math.floor((physicalY / visibleHeight) * frame.height));
+      const idx = (srcY * frame.width + srcX) * 4;
+      const r = frame.rgba[idx] ?? 0;
+      const g = frame.rgba[idx + 1] ?? 0;
+      const b = frame.rgba[idx + 2] ?? 0;
+
+      const buf = getUniverseBuffer(target.ip, target.universe);
+      buf[target.channel] = r;
+      buf[target.channel + 1] = g;
+      buf[target.channel + 2] = b;
+      dirtyUniverses.add(`${target.ip}:${target.universe}`);
+    }
+  }
+}
+
 function sendBlackout() {
   console.log('Sending blackout frames to all controllers...');
   
@@ -1581,27 +1623,32 @@ wss.on('connection', (ws) => {
         broadcastToClients({ type: 'log', message: `Synchronized ${detectedBeats.length} beat triggers with server.` });
       } else if (msg.type === 'play') {
         activeTestPattern = null;
+        activeImageFrame = null;
         isPlaying = true;
         playbackStartRealTime = Date.now() - playbackTime * 1000;
         updateRouterState();
       } else if (msg.type === 'stop') {
         activeTestPattern = null;
+        activeImageFrame = null;
         isPlaying = false;
         playbackTime = 0;
         updateRouterState();
       } else if (msg.type === 'blackout') {
         activeTestPattern = null;
+        activeImageFrame = null;
         isPlaying = false;
         playbackTime = 0;
         activeOverride = null;
         updateRouterState();
       } else if (msg.type === 'override') {
         activeTestPattern = null;
+        activeImageFrame = null;
         activeOverride = msg.key;
         console.log(`[Override] ${msg.key ? 'ACTIVATED: ' + msg.key : 'RELEASED'} | isPlaying=${isPlaying} | loopRunning=${routeInterval !== null}`);
         updateRouterState();
         console.log(`[Override] After updateRouterState: loopRunning=${routeInterval !== null}`);
       } else if (msg.type === 'test-controller') {
+        activeImageFrame = null;
         const { controllerIdx, color } = msg;
         if (activeTestPattern && activeTestPattern.type === 'controller' && activeTestPattern.controllerIdx === controllerIdx) {
           // Toggle off
@@ -1618,6 +1665,7 @@ wss.on('connection', (ws) => {
           broadcastToClients({ type: 'log', message: `Streaming test pattern to ${ctrl?.ip || 'unknown'}` });
         }
       } else if (msg.type === 'test-all') {
+        activeImageFrame = null;
         if (activeTestPattern && activeTestPattern.type === 'all') {
           // Toggle off
           activeTestPattern = null;
@@ -1664,6 +1712,44 @@ app.post('/api/config', (req, res) => {
   } catch (e) {
     res.status(500).json({ success: false, error: (e as Error).message });
   }
+});
+
+app.post('/api/image-wall', (req, res) => {
+  try {
+    const { width, height, rgbaBase64 } = req.body as {
+      width: number;
+      height: number;
+      rgbaBase64: string;
+    };
+
+    if (!width || !height || !rgbaBase64) {
+      return res.status(400).json({ success: false, error: 'Missing width, height, or rgbaBase64.' });
+    }
+
+    const rgba = new Uint8Array(Buffer.from(rgbaBase64, 'base64'));
+    activeTestPattern = null;
+    activeImageFrame = { width, height, rgba };
+    isPlaying = false;
+    playbackTime = 0;
+    activeOverride = null;
+    updateRouterState();
+
+    res.json({
+      success: true,
+      message: 'Image frame sent to wall.',
+      width,
+      height,
+      bytes: rgba.length,
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, error: (e as Error).message });
+  }
+});
+
+app.delete('/api/image-wall', (_req, res) => {
+  activeImageFrame = null;
+  updateRouterState();
+  res.json({ success: true, message: 'Image frame cleared.' });
 });
 
 // Debug endpoint - shows diagnostics for troubleshooting

@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, Square, Radio, Cpu, Settings, Activity, Trash2, Plus, Volume2 } from 'lucide-react';
+import { Play, Pause, Square, Radio, Cpu, Settings, Activity, Trash2, Plus, Volume2, ImagePlus } from 'lucide-react';
 import { Visualizer } from './components/Visualizer.tsx';
 import { synthInstance } from './components/AudioEngine.ts';
 import { analyzeAudioBeats } from './components/AudioAnalyzer.ts';
+import { ImageStudio } from './components/ImageStudio.tsx';
 
 interface TimelineBlock {
   id: string;
@@ -14,7 +15,7 @@ interface TimelineBlock {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'timeline' | 'config'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'timeline' | 'images' | 'config'>('dashboard');
   const [wsConnected, setWsConnected] = useState(false);
   const [telemetry, setTelemetry] = useState<any>({ fps: 0, packetsPerSec: 0, kbps: 0, ehubPacketsPerSec: 0 });
   const [currentTime, setCurrentTime] = useState(0);
@@ -327,6 +328,13 @@ export default function App() {
           onClick={() => setActiveTab('timeline')}
         >
           <Cpu size={16} style={{ marginRight: '6px', display: 'inline' }} /> Timeline Editor
+        </button>
+        <button
+          className="secondary"
+          style={{ borderRadius: '0', borderBottom: activeTab === 'images' ? '2px solid var(--color-red)' : 'none', color: activeTab === 'images' ? 'var(--text-primary)' : 'var(--text-secondary)' }}
+          onClick={() => setActiveTab('images')}
+        >
+          <ImagePlus size={16} style={{ marginRight: '6px', display: 'inline' }} /> Image Studio
         </button>
         <button
           className="secondary"
@@ -820,6 +828,8 @@ export default function App() {
             )}
           </div>
         )}
+
+        {activeTab === 'images' && <ImageStudio config={config} />}
 
         {activeTab === 'config' && config && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', flex: 1 }}>
