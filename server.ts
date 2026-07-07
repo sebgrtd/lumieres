@@ -17,6 +17,7 @@ import {
   type FixtureConfig,
   type LedWallConfig,
 } from './src/router/mapping.ts';
+import { SHOW_DURATION_SECONDS, SHOW_TIMELINE, type TimelineBlock } from './src/timeline/showTimeline.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -112,42 +113,12 @@ function forEachVisibleWallPixel(callback: (x: number, y: number, designX: numbe
 // Initial build
 rebuildUniverseRouteMap();
 
-// Timeline state stored on backend
-interface TimelineBlock {
-  id: string;
-  lane: 'wall' | 'lyres' | 'static';
-  startTime: number;
-  endTime: number;
-  type: string;
-  name: string;
-}
-
 // BPM Constants for COSMÓ - Tanzschein (130 BPM)
 const BPM = 130;
 const BEAT_DURATION = 60 / BPM; // ~0.4615s
 const AUDIO_OFFSET = 0.1; // adjust if audio start has delay
 
-let timelineBlocks: TimelineBlock[] = [
-  { id: '1', lane: 'wall', startTime: 0, endTime: 3.7, type: 'intro_ticks', name: 'Intro Ticks' },
-  { id: '2', lane: 'lyres', startTime: 0, endTime: 3.7, type: 'lyre_intro', name: 'Intro Silver Sweep' },
-  { id: '3', lane: 'static', startTime: 0, endTime: 3.7, type: 'static_off', name: 'Spotlight Off' },
-
-  { id: '4', lane: 'wall', startTime: 3.7, endTime: 11.1, type: 'blue_star_burst', name: 'COSMÓ Blue Star Burst' },
-  { id: '5', lane: 'lyres', startTime: 3.7, endTime: 11.1, type: 'lyre_kick_pulse', name: 'Lyres Kick Snap' },
-  { id: '6', lane: 'static', startTime: 3.7, endTime: 11.1, type: 'static_measure_pulse', name: 'Spot Blue Measure Pulse' },
-
-  { id: '7', lane: 'wall', startTime: 11.1, endTime: 18.5, type: 'quadrant_flashes', name: 'Quadrant Controller Flash' },
-  { id: '8', lane: 'lyres', startTime: 11.1, endTime: 18.5, type: 'lyre_circle_color', name: 'Lyres Color Circular' },
-  { id: '9', lane: 'static', startTime: 11.1, endTime: 18.5, type: 'static_snare_flash', name: 'Spot Magenta Snare Flash' },
-
-  { id: '10', lane: 'wall', startTime: 18.5, endTime: 25.8, type: 'laser_sweeps', name: 'Tanzschein Laser Sweeps' },
-  { id: '11', lane: 'lyres', startTime: 18.5, endTime: 25.8, type: 'lyre_buildup_strobe', name: 'Lyres Strobe Crescendo' },
-  { id: '12', lane: 'static', startTime: 18.5, endTime: 25.8, type: 'static_dimmer_rise', name: 'Spot Dimmer Rise' },
-
-  { id: '13', lane: 'wall', startTime: 25.8, endTime: 45.0, type: 'reactive_drop', name: 'Tanzschein Chorus Drop' },
-  { id: '14', lane: 'lyres', startTime: 25.8, endTime: 45.0, type: 'lyre_drop_trap', name: 'Lyres Mirror Trap Chases' },
-  { id: '15', lane: 'static', startTime: 25.8, endTime: 45.0, type: 'static_drop_strobe', name: 'Spot Strobe Drop' }
-];
+let timelineBlocks: TimelineBlock[] = [...SHOW_TIMELINE];
 
 // Playback state
 let isPlaying = false;
@@ -205,8 +176,8 @@ function updateRouterState() {
         if (isPlaying) {
           const now = Date.now();
           playbackTime = (now - playbackStartRealTime) / 1000;
-          if (playbackTime > 45) {
-            playbackTime = 0; // Loop show at 45 seconds
+          if (playbackTime > SHOW_DURATION_SECONDS) {
+            playbackTime = 0;
             playbackStartRealTime = now;
           }
         }
