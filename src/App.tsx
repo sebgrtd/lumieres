@@ -1,17 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Play, Pause, Square, Radio, Cpu, Settings, Activity, Trash2, Plus, Volume2 } from 'lucide-react';
 import { Visualizer } from './components/Visualizer.tsx';
 import { synthInstance } from './components/AudioEngine.ts';
 import { analyzeAudioBeats } from './components/AudioAnalyzer.ts';
-
-interface TimelineBlock {
-  id: string;
-  lane: 'wall' | 'lyres' | 'static';
-  startTime: number;
-  endTime: number;
-  type: string;
-  name: string;
-}
+import { SHOW_DURATION_SECONDS, SHOW_TIMELINE } from './timeline/showTimeline.ts';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'timeline' | 'config'>('dashboard');
@@ -43,36 +35,8 @@ export default function App() {
     }
   };
 
-  // Read-only visual tracks representation in UI
-  const [blocks, setBlocks] = useState<TimelineBlock[]>([
-    { id: '1', lane: 'wall', startTime: 0, endTime: 2.2, type: 'guitar_intro', name: 'Guitar Intro' },
-    { id: '2', lane: 'lyres', startTime: 0, endTime: 2.2, type: 'black', name: 'Lyres Off' },
-    { id: '3', lane: 'static', startTime: 0, endTime: 2.2, type: 'static_off', name: 'Spotlight Off' },
- 
-    { id: '4', lane: 'wall', startTime: 2.2, endTime: 5.0, type: 'intro_ticks', name: 'Intro Claps' },
-    { id: '5', lane: 'lyres', startTime: 2.2, endTime: 5.0, type: 'lyre_intro', name: 'Intro Silver Sweep' },
-    { id: '6', lane: 'static', startTime: 2.2, endTime: 5.0, type: 'static_off', name: 'Spotlight Off' },
-
-    { id: '7', lane: 'wall', startTime: 5.0, endTime: 5.9, type: 'black', name: 'Temps Mort' },
-    { id: '8', lane: 'lyres', startTime: 5.0, endTime: 5.9, type: 'black', name: 'Temps Mort' },
-    { id: '9', lane: 'static', startTime: 5.0, endTime: 5.9, type: 'static_off', name: 'Temps Mort' },
- 
-    { id: '10', lane: 'wall', startTime: 5.9, endTime: 13.3, type: 'blue_star_burst', name: 'COSMÓ Blue Star' },
-    { id: '11', lane: 'lyres', startTime: 5.9, endTime: 13.3, type: 'lyre_kick_pulse', name: 'Lyres Kick Snap' },
-    { id: '12', lane: 'static', startTime: 5.9, endTime: 13.3, type: 'static_measure_pulse', name: 'Spot Blue Pulse' },
- 
-    { id: '13', lane: 'wall', startTime: 13.3, endTime: 20.7, type: 'quadrant_flashes', name: 'Quadrant Flash' },
-    { id: '14', lane: 'lyres', startTime: 13.3, endTime: 20.7, type: 'lyre_circle_color', name: 'Lyres Color Circle' },
-    { id: '15', lane: 'static', startTime: 13.3, endTime: 20.7, type: 'static_snare_flash', name: 'Spot Magenta Snare' },
- 
-    { id: '16', lane: 'wall', startTime: 20.7, endTime: 28.0, type: 'laser_sweeps', name: 'Tanzschein Lasers' },
-    { id: '17', lane: 'lyres', startTime: 20.7, endTime: 28.0, type: 'lyre_buildup_strobe', name: 'Lyres Buildup Strobe' },
-    { id: '18', lane: 'static', startTime: 20.7, endTime: 28.0, type: 'static_dimmer_rise', name: 'Spot Dimmer Rise' },
- 
-    { id: '19', lane: 'wall', startTime: 28.0, endTime: 45.0, type: 'reactive_drop', name: 'Tanzschein Drop' },
-    { id: '20', lane: 'lyres', startTime: 28.0, endTime: 45.0, type: 'lyre_drop_trap', name: 'Lyres Mirrored Chases' },
-    { id: '21', lane: 'static', startTime: 28.0, endTime: 45.0, type: 'static_drop_strobe', name: 'Spot Strobe Drop' }
-  ]);
+  // Read-only representation of the backend timeline.
+  const blocks = SHOW_TIMELINE;
 
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [interactiveOverride, setInteractiveOverride] = useState<string | null>(null);
@@ -347,7 +311,7 @@ export default function App() {
         {activeTab === 'dashboard' && (
           <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '24px', flex: 1 }}>
             
-            <Visualizer frameState={frameState} config={config} />
+            <Visualizer frameState={frameState} />
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
               {/* Playback controls */}
@@ -623,8 +587,8 @@ export default function App() {
                         onClick={() => setSelectedBlockId(b.id)}
                         style={{
                           position: 'absolute',
-                          left: `${(b.startTime / 45) * 100}%`,
-                          width: `${((b.endTime - b.startTime) / 45) * 100}%`,
+                          left: `${(b.startTime / SHOW_DURATION_SECONDS) * 100}%`,
+                          width: `${((b.endTime - b.startTime) / SHOW_DURATION_SECONDS) * 100}%`,
                           height: '100%',
                           backgroundColor: 'rgba(230, 20, 30, 0.25)',
                           border: selectedBlockId === b.id ? '2px solid var(--color-red)' : '1px solid var(--color-red)',
@@ -653,8 +617,8 @@ export default function App() {
                         onClick={() => setSelectedBlockId(b.id)}
                         style={{
                           position: 'absolute',
-                          left: `${(b.startTime / 45) * 100}%`,
-                          width: `${((b.endTime - b.startTime) / 45) * 100}%`,
+                          left: `${(b.startTime / SHOW_DURATION_SECONDS) * 100}%`,
+                          width: `${((b.endTime - b.startTime) / SHOW_DURATION_SECONDS) * 100}%`,
                           height: '100%',
                           backgroundColor: 'rgba(235, 180, 45, 0.2)',
                           border: selectedBlockId === b.id ? '2px solid var(--color-gold)' : '1px solid var(--color-gold)',
@@ -683,8 +647,8 @@ export default function App() {
                         onClick={() => setSelectedBlockId(b.id)}
                         style={{
                           position: 'absolute',
-                          left: `${(b.startTime / 45) * 100}%`,
-                          width: `${((b.endTime - b.startTime) / 45) * 100}%`,
+                          left: `${(b.startTime / SHOW_DURATION_SECONDS) * 100}%`,
+                          width: `${((b.endTime - b.startTime) / SHOW_DURATION_SECONDS) * 100}%`,
                           height: '100%',
                           backgroundColor: 'rgba(59, 130, 246, 0.25)',
                           border: selectedBlockId === b.id ? '2px solid var(--color-cyan)' : '1px solid var(--color-cyan)',
@@ -708,7 +672,7 @@ export default function App() {
                   <input
                     type="range"
                     min={0}
-                    max={45}
+                    max={SHOW_DURATION_SECONDS}
                     step={0.1}
                     value={currentTime}
                     disabled // Driven strictly by server playback loop
@@ -720,7 +684,7 @@ export default function App() {
                     <span>14.8s (Quadrants)</span>
                     <span>22.2s (Buildup)</span>
                     <span>29.5s (Tanzschein Drop)</span>
-                    <span>45s (End)</span>
+                    <span>{SHOW_DURATION_SECONDS}s (End)</span>
                   </div>
                 </div>
               </div>
@@ -730,17 +694,8 @@ export default function App() {
             {selectedBlockId && (
               <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3 style={{ fontSize: '1.1rem' }}>Edit Animation Segment</h3>
-                  <button
-                    style={{ backgroundColor: '#dc2626', color: '#fff', padding: '6px 12px', fontSize: '0.8rem' }}
-                    onClick={() => {
-                      setBlocks(prev => prev.filter(b => b.id !== selectedBlockId));
-                      setSelectedBlockId(null);
-                      addLog('Removed block from timeline.');
-                    }}
-                  >
-                    <Trash2 size={14} style={{ display: 'inline', marginRight: '4px' }} /> Delete Block
-                  </button>
+                  <h3 style={{ fontSize: '1.1rem' }}>Animation Segment</h3>
+                  <span className="badge badge-cyan">READ ONLY</span>
                 </div>
 
                 {(() => {
@@ -753,19 +708,13 @@ export default function App() {
                         <input
                           type="text"
                           value={block.name}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setBlocks(prev => prev.map(b => b.id === block.id ? { ...b, name: val } : b));
-                          }}
+                          readOnly
                         />
 
                         <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Animation Pattern</label>
                         <select
                           value={block.type}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setBlocks(prev => prev.map(b => b.id === block.id ? { ...b, type: val } : b));
-                          }}
+                          disabled
                         >
                           {block.lane === 'wall' ? (
                             <>
@@ -801,10 +750,7 @@ export default function App() {
                           type="number"
                           step={0.1}
                           value={block.startTime}
-                          onChange={(e) => {
-                            const val = parseFloat(e.target.value);
-                            setBlocks(prev => prev.map(b => b.id === block.id ? { ...b, startTime: val } : b));
-                          }}
+                          readOnly
                         />
 
                         <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>End Time (seconds)</label>
@@ -812,10 +758,7 @@ export default function App() {
                           type="number"
                           step={0.1}
                           value={block.endTime}
-                          onChange={(e) => {
-                            const val = parseFloat(e.target.value);
-                            setBlocks(prev => prev.map(b => b.id === block.id ? { ...b, endTime: val } : b));
-                          }}
+                          readOnly
                         />
                       </div>
                     </div>

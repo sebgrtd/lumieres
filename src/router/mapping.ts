@@ -42,7 +42,6 @@ export function generateDefaultConfig(): RouterConfig {
     const startUniverse = c * 32;
 
     for (let s = 0; s < 16; s++) {
-      const globalStripIndex = c * 16 + s;
       const u0 = startUniverse + s * 2;
       const u1 = u0 + 1;
 

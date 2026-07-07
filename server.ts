@@ -9,6 +9,7 @@ import { exec } from 'child_process';
 import { ArtNetSender } from './src/router/artnet.ts';
 import { EHubReceiver } from './src/router/ehub.ts';
 import { generateDefaultConfig, RouterConfig, getEntityIdFromGrid } from './src/router/mapping.ts';
+import { SHOW_DURATION_SECONDS, SHOW_TIMELINE, type TimelineBlock } from './src/timeline/showTimeline.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -86,43 +87,12 @@ const packetCountPerIp: Map<string, number> = new Map();
 // Initial build
 rebuildUniverseRouteMap();
 
-// Timeline state stored on backend
-interface TimelineBlock {
-  id: string;
-  lane: 'wall' | 'lyres' | 'static';
-  startTime: number;
-  endTime: number;
-  type: string;
-  name: string;
-}
-
 // BPM Constants for COSMÓ - Tanzschein (130 BPM)
 const BPM = 130;
 const BEAT_DURATION = 60 / BPM; // ~0.4615s
-const MEASURE_DURATION = BEAT_DURATION * 4; // ~1.846s
 const AUDIO_OFFSET = 0.1; // adjust if audio start has delay
 
-let timelineBlocks: TimelineBlock[] = [
-  { id: '1', lane: 'wall', startTime: 0, endTime: 3.7, type: 'intro_ticks', name: 'Intro Ticks' },
-  { id: '2', lane: 'lyres', startTime: 0, endTime: 3.7, type: 'lyre_intro', name: 'Intro Silver Sweep' },
-  { id: '3', lane: 'static', startTime: 0, endTime: 3.7, type: 'static_off', name: 'Spotlight Off' },
-
-  { id: '4', lane: 'wall', startTime: 3.7, endTime: 11.1, type: 'blue_star_burst', name: 'COSMÓ Blue Star Burst' },
-  { id: '5', lane: 'lyres', startTime: 3.7, endTime: 11.1, type: 'lyre_kick_pulse', name: 'Lyres Kick Snap' },
-  { id: '6', lane: 'static', startTime: 3.7, endTime: 11.1, type: 'static_measure_pulse', name: 'Spot Blue Measure Pulse' },
-
-  { id: '7', lane: 'wall', startTime: 11.1, endTime: 18.5, type: 'quadrant_flashes', name: 'Quadrant Controller Flash' },
-  { id: '8', lane: 'lyres', startTime: 11.1, endTime: 18.5, type: 'lyre_circle_color', name: 'Lyres Color Circular' },
-  { id: '9', lane: 'static', startTime: 11.1, endTime: 18.5, type: 'static_snare_flash', name: 'Spot Magenta Snare Flash' },
-
-  { id: '10', lane: 'wall', startTime: 18.5, endTime: 25.8, type: 'laser_sweeps', name: 'Tanzschein Laser Sweeps' },
-  { id: '11', lane: 'lyres', startTime: 18.5, endTime: 25.8, type: 'lyre_buildup_strobe', name: 'Lyres Strobe Crescendo' },
-  { id: '12', lane: 'static', startTime: 18.5, endTime: 25.8, type: 'static_dimmer_rise', name: 'Spot Dimmer Rise' },
-
-  { id: '13', lane: 'wall', startTime: 25.8, endTime: 45.0, type: 'reactive_drop', name: 'Tanzschein Chorus Drop' },
-  { id: '14', lane: 'lyres', startTime: 25.8, endTime: 45.0, type: 'lyre_drop_trap', name: 'Lyres Mirror Trap Chases' },
-  { id: '15', lane: 'static', startTime: 25.8, endTime: 45.0, type: 'static_drop_strobe', name: 'Spot Strobe Drop' }
-];
+let timelineBlocks: TimelineBlock[] = [...SHOW_TIMELINE];
 
 // Playback state
 let isPlaying = false;
@@ -142,11 +112,28 @@ let stats = {
 };
 
 let lastStatsTime = Date.now();
-let currentTelemetry = {
+interface TelemetryState {
+  fps: number;
+  packetsPerSec: number;
+  kbps: number;
+  ehubPacketsPerSec: number;
+  packetCountPerIp: Record<string, number>;
+  activeOverride: string | null;
+  isPlaying: boolean;
+  loopRunning: boolean;
+  activeTestPattern: { type: 'controller' | 'all'; controllerIdx?: number } | null;
+}
+
+let currentTelemetry: TelemetryState = {
   fps: 0,
   packetsPerSec: 0,
   kbps: 0,
   ehubPacketsPerSec: 0,
+  packetCountPerIp: {},
+  activeOverride: null,
+  isPlaying: false,
+  loopRunning: false,
+  activeTestPattern: null,
 };
 
 let activeTestPattern: { type: 'controller' | 'all'; controllerIdx?: number; color?: number[] } | null = null;
@@ -163,8 +150,8 @@ function updateRouterState() {
         if (isPlaying) {
           const now = Date.now();
           playbackTime = (now - playbackStartRealTime) / 1000;
-          if (playbackTime > 45) {
-            playbackTime = 0; // Loop show at 45 seconds
+          if (playbackTime > SHOW_DURATION_SECONDS) {
+            playbackTime = 0;
             playbackStartRealTime = now;
           }
         }
@@ -402,8 +389,6 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
         } else {
           const dx = x - 64;
           const dy = y - 64;
-          const dist = Math.sqrt(dx*dx + dy*dy);
-          
           const progress = Math.max(0, Math.min(1.0, (time - 20.7) / 7.3));
           const angle = time * (3.0 + progress * 5.0); // accelerates rotation
           
@@ -482,11 +467,6 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
         }
       } else if (type === 'reactive_drop') {
         // 5. Huge TANZ / SCHEIN stroboscopic text + equalizers
-        const dx = x - 64;
-        const dy = y - 64;
-        const dist = Math.sqrt(dx*dx + dy*dy);
-        const angle = Math.atan2(dy, dx);
-        
         // A. Bouncing Equalizer height
         const colIdx = Math.floor(x / 8);
         const bounce = Math.exp(-beatProgress * 4.0);
@@ -564,8 +544,6 @@ function evaluateLyresBlock(type: string, time: number, isAudioImpact: boolean =
   const adjustedTime = time + AUDIO_OFFSET;
   const beatIdx = Math.floor(adjustedTime / BEAT_DURATION);
   const beatProgress = (adjustedTime % BEAT_DURATION) / BEAT_DURATION;
-  const measureIdx = Math.floor(beatIdx / 4);
-  const beatInMeasure = beatIdx % 4;
 
   for (let l = 0; l < 4; l++) {
     const baseId = 34000 + (l + 1) * 100;
@@ -653,7 +631,6 @@ function evaluateStaticBlock(type: string, time: number, isAudioImpact: boolean 
   const adjustedTime = time + AUDIO_OFFSET;
   const beatIdx = Math.floor(adjustedTime / BEAT_DURATION);
   const beatProgress = (adjustedTime % BEAT_DURATION) / BEAT_DURATION;
-  const measureIdx = Math.floor(beatIdx / 4);
   const beatInMeasure = beatIdx % 4;
 
   let r = 0, g = 0, b = 0, w = 0;
@@ -719,7 +696,7 @@ function evaluateStaticBlock(type: string, time: number, isAudioImpact: boolean 
 }
 
 // Character Masks Pixel Art Rendering Engine (Eurovision 2026 "Tanzschein" inspired)
-function drawCharacterMask(type: string, x: number, y: number, time: number, beatProgress: number) {
+function drawCharacterMask(type: string, x: number, y: number, _time: number, beatProgress: number) {
   let r = 0, g = 0, b = 0;
   
   const dx = x - 64;
@@ -1121,6 +1098,7 @@ function sendPreviewToClients() {
   broadcastToClients({
     type: 'frame',
     time: playbackTime,
+    lyrics: getLyricsAtTime(playbackTime),
     data: previewData,
   });
 }
@@ -1311,7 +1289,7 @@ wss.on('connection', (ws) => {
 });
 
 // REST API Endpoints
-app.get('/api/config', (req, res) => {
+app.get('/api/config', (_req, res) => {
   res.json(activeConfig);
 });
 
@@ -1335,7 +1313,7 @@ app.post('/api/config', (req, res) => {
 });
 
 // Debug endpoint - shows diagnostics for troubleshooting
-app.get('/api/debug', (req, res) => {
+app.get('/api/debug', (_req, res) => {
   // Count entities per controller IP
   const entitiesPerIp: Record<string, number> = {};
   const universesPerIp: Record<string, number[]> = {};
@@ -1388,7 +1366,7 @@ app.get('/api/debug', (req, res) => {
 });
 
 // Test pattern endpoint - sends distinct color per controller quadrant
-app.get('/api/test-pattern', (req, res) => {
+app.get('/api/test-pattern', (_req, res) => {
   const colors = [
     [255, 0, 0],     // Controller .45 = RED
     [0, 255, 0],     // Controller .46 = GREEN
@@ -1444,7 +1422,7 @@ app.get('/api/test-pattern', (req, res) => {
 });
 
 // Ping endpoint to test controller reachability
-app.get('/api/ping', async (req, res) => {
+app.get('/api/ping', async (_req, res) => {
   console.log('[Ping] Diagnosing controller reachability...');
   const pingResults = await Promise.all(
     activeConfig.controllers.map(async (ctrl) => {
