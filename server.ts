@@ -37,14 +37,15 @@ if (fs.existsSync(CONFIG_FILE)) {
 const artnetSender = new ArtNetSender();
 
 // Allocate universe DMX buffers: map of universe -> Uint8Array(512)
-const universeBuffers: Map<number, Uint8Array> = new Map();
-const dirtyUniverses: Set<number> = new Set();
+const universeBuffers: Map<string, Uint8Array> = new Map();
+const dirtyUniverses: Set<string> = new Set();
 
-function getUniverseBuffer(universe: number): Uint8Array {
-  let buf = universeBuffers.get(universe);
+function getUniverseBuffer(ip: string, universe: number): Uint8Array {
+  const key = `${ip}:${universe}`;
+  let buf = universeBuffers.get(key);
   if (!buf) {
     buf = new Uint8Array(512);
-    universeBuffers.set(universe, buf);
+    universeBuffers.set(key, buf);
   }
   return buf;
 }
@@ -181,11 +182,11 @@ function updateRouterState() {
             if (ctrl) {
               const [r, g, b] = activeTestPattern.color!;
               ctrl.universes.forEach((univ) => {
-                const buf = getUniverseBuffer(univ);
+                const buf = getUniverseBuffer(ctrl.ip, univ);
                 for (let ch = 0; ch < 510; ch += 3) {
                   buf[ch] = r; buf[ch + 1] = g; buf[ch + 2] = b;
                 }
-                dirtyUniverses.add(univ);
+                dirtyUniverses.add(`${ctrl.ip}:${univ}`);
               });
             }
           } else if (activeTestPattern.type === 'all') {
@@ -193,11 +194,11 @@ function updateRouterState() {
             activeConfig.controllers.forEach((ctrl, idx) => {
               const [r, g, b] = colors[idx] || [128,128,128];
               ctrl.universes.forEach((univ) => {
-                const buf = getUniverseBuffer(univ);
+                const buf = getUniverseBuffer(ctrl.ip, univ);
                 for (let ch = 0; ch < 510; ch += 3) {
                   buf[ch] = r; buf[ch + 1] = g; buf[ch + 2] = b;
                 }
-                dirtyUniverses.add(univ);
+                dirtyUniverses.add(`${ctrl.ip}:${univ}`);
               });
             });
           }
@@ -228,15 +229,19 @@ function updateRouterState() {
         }
 
         // 3. Send dirty universes to controllers via ArtNet
-        dirtyUniverses.forEach((univ) => {
-          const route = universeRouteMap.get(univ);
-          if (route) {
-            const buf = universeBuffers.get(univ);
+        dirtyUniverses.forEach((key) => {
+          const [ip, univStr] = key.split(':');
+          const univ = parseInt(univStr, 10);
+          const ctrl = activeConfig.controllers.find(c => c.ip === ip);
+          if (ctrl) {
+            const offset = ctrl.startUniverse ?? 0;
+            const artnetUniverse = univ < offset ? univ : univ - offset;
+            const buf = universeBuffers.get(key);
             if (buf) {
-              artnetSender.send(route.artnetUniverse, buf, { ip: route.ip });
+              artnetSender.send(artnetUniverse, buf, { ip });
               stats.packetsSent++;
               stats.bytesSent += 18 + buf.length;
-              packetCountPerIp.set(route.ip, (packetCountPerIp.get(route.ip) || 0) + 1);
+              packetCountPerIp.set(ip, (packetCountPerIp.get(ip) || 0) + 1);
             }
           }
         });
@@ -278,7 +283,28 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
 
       let r = 0, g = 0, b = 0;
 
-      if (type === 'intro_ticks') {
+      if (type === 'guitar_intro') {
+        // Keep screen completely black for the first 0.6 seconds to cover initial silence
+        if (time < 0.6) {
+          r = g = b = 0;
+        } else {
+          // Simple visual for guitar intro: vibrating golden/amber guitar string pluck in center (y = 64)
+          const pluckIntensity = Math.exp(-beatProgress * 4.0);
+          const wave = Math.sin(x * 0.15 + time * 12) * 6 * pluckIntensity;
+          const stringY = 64 + Math.round(wave);
+          
+          if (Math.abs(y - stringY) < 1.5) {
+            r = 235; g = 160; b = 45; // Amber/Gold string pluck
+          } else {
+            // Dim expanding glow
+            const dist = Math.abs(y - stringY);
+            const glow = Math.max(0, 1.0 - dist / 12) * pluckIntensity;
+            r = Math.round(40 * glow);
+            g = Math.round(25 * glow);
+            b = Math.round(8 * glow);
+          }
+        }
+      } else if (type === 'intro_ticks') {
         // 1. Concentric shrinking neon square tunnel (ticking clock feel)
         const dx = Math.abs(x - 64);
         const dy = Math.abs(y - 64);
@@ -299,9 +325,9 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
           r = g = b = intensity;
         }
 
-        // Smooth fade-out at the end of the intro block (from 3.4s to 3.7s)
-        if (time > 3.4 && time <= 3.7) {
-          const fade = (3.7 - time) / 0.3;
+        // Smooth fade-out at the end of the claps (from 4.7s to 5.0s, before blackout)
+        if (time > 4.7 && time <= 5.0) {
+          const fade = (5.0 - time) / 0.3;
           r = Math.round(r * fade);
           g = Math.round(g * fade);
           b = Math.round(b * fade);
@@ -337,9 +363,9 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
           }
         }
 
-        // Transition White Flash Impact at the drop entry (from 3.7s to 3.95s)
-        if (time >= 3.7 && time < 3.95) {
-          const flash = 1.0 - (time - 3.7) / 0.25;
+        // Transition White Flash Impact at the drop entry (from 5.9s to 6.15s)
+        if (time >= 5.9 && time < 6.15) {
+          const flash = 1.0 - (time - 5.9) / 0.25;
           r = Math.round(r * (1.0 - flash) + 255 * flash);
           g = Math.round(g * (1.0 - flash) + 255 * flash);
           b = Math.round(b * (1.0 - flash) + 255 * flash);
@@ -378,7 +404,7 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
           const dy = y - 64;
           const dist = Math.sqrt(dx*dx + dy*dy);
           
-          const progress = Math.max(0, Math.min(1.0, (time - 18.5) / 7.3));
+          const progress = Math.max(0, Math.min(1.0, (time - 20.7) / 7.3));
           const angle = time * (3.0 + progress * 5.0); // accelerates rotation
           
           // Draw two crossing laser lines
@@ -408,59 +434,110 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
             r = 255; g = 255; b = 255;
           }
         }
-      } else if (type === 'reactive_drop') {
-        // 5. Singer COSMÓ Face + Equalizer + Expanding Gold Star
-        const maskColor = drawCharacterMask('cosmo', x, y, time, beatProgress);
-        
-        if (maskColor.r > 0 || maskColor.g > 0 || maskColor.b > 0) {
-          r = maskColor.r; g = maskColor.g; b = maskColor.b;
-        } else {
-          const dx = x - 64;
-          const dy = y - 64;
-          const dist = Math.sqrt(dx*dx + dy*dy);
-          
-          // A. Background strobe wash
-          const strobeWashOn = beatIdx % 2 === 0;
-          if (strobeWashOn) {
-            r = 0; g = 20; b = 40; // Deep Cyan wash
-          } else {
-            r = 25; g = 0; b = 15; // Deep Magenta wash
-          }
 
-          // B. Equalizer bars (16 columns) reacting to the Kick
-          const colIdx = Math.floor(x / 8);
-          const bounce = Math.exp(-beatProgress * 4.0);
-          const baseHeight = (Math.sin(colIdx * 0.7 + time * 12) * 0.3 + 0.7) * 45;
-          const targetHeight = 15 + baseHeight * (0.4 + 0.6 * bounce);
-          
-          if (y < targetHeight) {
-            if (y < 30) {
-              r = 255; g = 0; b = 150; // Neon Pink
-            } else if (y < 50) {
-              r = 0; g = 255; b = 255; // Neon Cyan
+        // Overlay huge stroboscopic "HEY HEY" on two lines with slide-in transitions (20.7s to 23.0s)
+        if (time >= 20.7 && time < 23.0) {
+          const inTextRibbon = y >= 42 && y < 87;
+          if (inTextRibbon) {
+            const scale = 3;
+            
+            // 1. Top "HEY" (slides from left starting at 20.7s)
+            const t1 = time - 20.7;
+            const targetX1 = 32;
+            const startY1 = 86;
+            let startX1 = targetX1;
+            if (t1 < 0.3) {
+              startX1 = Math.round(-80 + 112 * (t1 / 0.3));
+            }
+            const inText1 = isPixelInText("HEY", x, y, startX1, startY1, scale, 7);
+
+            // 2. Bottom "HEY" (slides from right starting at 21.85s)
+            let inText2 = false;
+            if (time >= 21.85) {
+              const t2 = time - 21.85;
+              const targetX2 = 32;
+              const startY2 = 62;
+              let startX2 = targetX2;
+              if (t2 < 0.3) {
+                startX2 = Math.round(128 - 96 * (t2 / 0.3));
+              }
+              inText2 = isPixelInText("HEY", x, y, startX2, startY2, scale, 7);
+            }
+
+            const inText = inText1 || inText2;
+            const invertActive = beatIdx % 2 === 0;
+
+            if (invertActive) {
+              if (inText) {
+                r = 0; g = 0; b = 0; // Black text
+              } else {
+                r = 235; g = 180; b = 45; // Gold background strobe
+              }
             } else {
-              r = 245; g = 245; b = 255; // Silver/White
+              if (inText) {
+                r = 235; g = 180; b = 45; // Gold text
+              }
             }
           }
-          
-          // C. Concentric Gold Star Burst (Eurovision star motif!)
-          const burstProgress = beatProgress; // expands every beat
-          const burstRadius = burstProgress * 85;
-          const angle = Math.atan2(dy, dx);
-          
-          const starFactor = Math.abs(Math.sin(angle * 4));
-          const starRadius = burstRadius * (0.7 + 0.3 * starFactor);
-          
-          if (Math.abs(dist - starRadius) < 3.0) {
-            r = 235; g = 180; b = 45; // Neon Gold star outline
-          }
+        }
+      } else if (type === 'reactive_drop') {
+        // 5. Huge TANZ / SCHEIN stroboscopic text + equalizers
+        const dx = x - 64;
+        const dy = y - 64;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        const angle = Math.atan2(dy, dx);
+        
+        // A. Bouncing Equalizer height
+        const colIdx = Math.floor(x / 8);
+        const bounce = Math.exp(-beatProgress * 4.0);
+        const baseHeight = (Math.sin(colIdx * 0.7 + time * 12) * 0.3 + 0.7) * 35;
+        const eqHeight = 10 + baseHeight * (0.4 + 0.6 * bounce);
 
-          // D. Full-screen Clap Flash (first 50ms of beats 1 and 3 of the measure)
-          if (beatProgress < 0.12 && (beatInMeasure === 1 || beatInMeasure === 3)) {
-            r = 255; g = 255; b = 255;
+        // B. Center text area (y from 24 to 104)
+        const inRibbon = y >= 24 && y < 104;        if (inRibbon) {
+          const inText = isPixelInTextManual(x, y);
+
+          const invertActive = beatIdx % 2 === 0;
+
+          // Theme colors (Cyan, Magenta, Gold)
+          const colors = [[0, 255, 255], [255, 0, 150], [235, 180, 45]];
+          const themeCol = colors[measureIdx % colors.length] || [255, 255, 255];
+
+          if (invertActive) {
+            if (inText) {
+              r = 0; g = 0; b = 0; // Black text
+            } else {
+              r = themeCol[0]; g = themeCol[1]; b = themeCol[2]; // Colored background strobe
+            }
+          } else {
+            if (inText) {
+              r = themeCol[0]; g = themeCol[1]; b = themeCol[2]; // Colored text
+            } else {
+              r = 0; g = 0; b = 0; // Black background
+            }
+          }
+        } else {
+          // C. Outside the ribbon: draw mirrored equalizer bars at top and bottom
+          const isInsideEq = (y < eqHeight) || (y > 127 - eqHeight);
+          if (isInsideEq) {
+            if (y < 20 || y > 107) {
+              r = 255; g = 0; b = 150; // Neon Pink
+            } else {
+              r = 0; g = 255; b = 255; // Neon Cyan
+            }
+          } else {
+            // Background deep strobe wash
+            const strobeWashOn = beatIdx % 2 === 0;
+            if (strobeWashOn) {
+              r = 0; g = 20; b = 40; // Deep Cyan wash
+            } else {
+              r = 25; g = 0; b = 15; // Deep Magenta wash
+            }
           }
         }
       }
+
+
 
       // EXTRA: Draw expanding shockwave circles of white sparkles on analyzed audio beat hits
       if (isAudioImpact && type !== 'black') {
@@ -474,11 +551,11 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
       }
 
       // Write directly to universe buffers
-      const buf = getUniverseBuffer(target.universe);
+      const buf = getUniverseBuffer(target.ip, target.universe);
       buf[target.channel] = r;
       buf[target.channel + 1] = g;
       buf[target.channel + 2] = b;
-      dirtyUniverses.add(target.universe);
+      dirtyUniverses.add(`${target.ip}:${target.universe}`);
     }
   }
 }
@@ -527,7 +604,7 @@ function evaluateLyresBlock(type: string, time: number, isAudioImpact: boolean =
     } else if (type === 'lyre_buildup_strobe') {
       // Raise beams to ceiling
       pan = 127;
-      const progress = Math.max(0, Math.min(1.0, (time - 18.5) / 7.3));
+      const progress = Math.max(0, Math.min(1.0, (time - 20.7) / 7.3));
       tilt = Math.round(120 + progress * 100);
       dimmer = 255;
       // Accelerate strobe
@@ -546,8 +623,8 @@ function evaluateLyresBlock(type: string, time: number, isAudioImpact: boolean =
       dimmer = 0;
     }
 
-    // Transition Flash at 3.7s (Drop entry)
-    if (time >= 3.7 && time < 3.95) {
+    // Transition Flash at 5.9s (Drop entry after blackout)
+    if (time >= 5.9 && time < 6.15) {
       dimmer = 255;
       strobe = 250; // violent strobe
       colorCh = 15; // White
@@ -564,9 +641,9 @@ function evaluateLyresBlock(type: string, time: number, isAudioImpact: boolean =
     values.forEach((val, ch) => {
       const target = activeConfig.entityMap[baseId + ch];
       if (target) {
-        const buf = getUniverseBuffer(target.universe);
+        const buf = getUniverseBuffer(target.ip, target.universe);
         buf[target.channel] = val;
-        dirtyUniverses.add(target.universe);
+        dirtyUniverses.add(`${target.ip}:${target.universe}`);
       }
     });
   }
@@ -598,7 +675,7 @@ function evaluateStaticBlock(type: string, time: number, isAudioImpact: boolean 
     }
   } else if (type === 'static_dimmer_rise') {
     // Rise white dimmer
-    const progress = Math.max(0, Math.min(1.0, (time - 18.5) / 7.3));
+    const progress = Math.max(0, Math.min(1.0, (time - 20.7) / 7.3));
     w = Math.floor(progress * 255);
   } else if (type === 'static_drop_strobe') {
     // Strobe flash
@@ -614,8 +691,8 @@ function evaluateStaticBlock(type: string, time: number, isAudioImpact: boolean 
     }
   }
 
-  // Transition Flash at 3.7s (Drop entry)
-  if (time >= 3.7 && time < 3.95) {
+  // Transition Flash at 5.9s (Drop entry after blackout)
+  if (time >= 5.9 && time < 6.15) {
     w = 255;
     r = 255;
     g = 255;
@@ -634,9 +711,9 @@ function evaluateStaticBlock(type: string, time: number, isAudioImpact: boolean 
   ids.forEach((id, idx) => {
     const target = activeConfig.entityMap[id];
     if (target) {
-      const buf = getUniverseBuffer(target.universe);
+      const buf = getUniverseBuffer(target.ip, target.universe);
       buf[target.channel] = values[idx];
-      dirtyUniverses.add(target.universe);
+      dirtyUniverses.add(`${target.ip}:${target.universe}`);
     }
   });
 }
@@ -762,6 +839,179 @@ function drawCharacterMask(type: string, x: number, y: number, time: number, bea
   return { r, g, b };
 }
 
+// Custom 5x7 bitmap font for rendering lyrics
+const font: Record<string, number[]> = {
+  'A': [0x7e, 0x11, 0x11, 0x11, 0x7e],
+  'B': [0x7f, 0x49, 0x49, 0x49, 0x36],
+  'C': [0x3e, 0x41, 0x41, 0x41, 0x22],
+  'D': [0x7f, 0x41, 0x41, 0x22, 0x1c],
+  'E': [0x7f, 0x49, 0x49, 0x49, 0x41],
+  'F': [0x7f, 0x09, 0x09, 0x09, 0x01],
+  'G': [0x3e, 0x41, 0x49, 0x49, 0x7a],
+  'H': [0x7f, 0x08, 0x08, 0x08, 0x7f],
+  'I': [0x00, 0x41, 0x7f, 0x41, 0x00],
+  'J': [0x20, 0x40, 0x41, 0x3f, 0x01],
+  'K': [0x7f, 0x08, 0x14, 0x22, 0x41],
+  'L': [0x7f, 0x40, 0x40, 0x40, 0x40],
+  'M': [0x7f, 0x02, 0x0c, 0x02, 0x7f],
+  'N': [0x7f, 0x04, 0x08, 0x10, 0x7f],
+  'O': [0x3e, 0x41, 0x41, 0x41, 0x3e],
+  'P': [0x7f, 0x09, 0x09, 0x09, 0x06],
+  'Q': [0x3e, 0x41, 0x51, 0x21, 0x5e],
+  'R': [0x7f, 0x09, 0x19, 0x29, 0x46],
+  'S': [0x26, 0x49, 0x49, 0x49, 0x32],
+  'T': [0x01, 0x01, 0x7f, 0x01, 0x01],
+  'U': [0x3f, 0x40, 0x40, 0x40, 0x3f],
+  'V': [0x1f, 0x20, 0x40, 0x20, 0x1f],
+  'W': [0x7f, 0x20, 0x18, 0x20, 0x7f],
+  'X': [0x63, 0x14, 0x08, 0x14, 0x63],
+  'Y': [0x07, 0x08, 0x70, 0x08, 0x07],
+  'Z': [0x61, 0x51, 0x49, 0x45, 0x43],
+  ' ': [0x00, 0x00, 0x00, 0x00, 0x00],
+  '?': [0x2d, 0x26, 0x49, 0x09, 0x06],
+  '!': [0x00, 0x00, 0x5f, 0x00, 0x00]
+};
+
+// Check if pixel at (px, py) is inside text string
+// Automatically projects text from left-to-right and top-to-bottom on standard coordinates
+function isPixelInText(str: string, px: number, py: number, startX: number, startY: number, scale: number = 1, spacingWidth: number = 6): boolean {
+  // px goes from 0 (left) to 127 (right)
+  const dx = px - startX;
+  
+  // py goes from 127 (top) to 0 (bottom)
+  const dy = startY - py;
+  
+  if (dx < 0 || dy < 0) return false;
+  
+  const charW = spacingWidth * scale;
+  const charH = 7 * scale;
+  
+  const charIdx = Math.floor(dx / charW);
+  if (charIdx < 0 || charIdx >= str.length) return false;
+  
+  if (dy >= charH) return false;
+  
+  const relX = Math.floor((dx % charW) / scale);
+  if (relX >= 5) return false; // character spacing column
+  
+  const relY = Math.floor(dy / scale);
+  
+  const char = str[charIdx];
+  const cols = font[char] || [0x00, 0x00, 0x00, 0x00, 0x00];
+  const colByte = cols[relX];
+  
+  return (colByte & (1 << relY)) !== 0;
+}
+
+// Handcoded pixel-perfect drawing for the Chorus "TANZ / SCHEIN" block
+// Bypasses scaling arithmetic bugs to align letters vertically and ensure no clipping
+function isPixelInTextManual(x: number, y: number): boolean {
+  // 1. Top line (TANZ): y from 68 to 88 (startY = 88)
+  if (y >= 68 && y <= 88) {
+    const dy = 88 - y;
+    const relY = Math.floor(dy / 3); // 0..6
+    
+    // T: x from 25 to 39
+    if (x >= 25 && x <= 39) {
+      const relX = Math.floor((x - 25) / 3);
+      const colByte = font['T'][relX];
+      return (colByte & (1 << relY)) !== 0;
+    }
+    // A: x from 46 to 60
+    if (x >= 46 && x <= 60) {
+      const relX = Math.floor((x - 46) / 3);
+      const colByte = font['A'][relX];
+      return (colByte & (1 << relY)) !== 0;
+    }
+    // N: x from 67 to 81
+    if (x >= 67 && x <= 81) {
+      const relX = Math.floor((x - 67) / 3);
+      const colByte = font['N'][relX];
+      return (colByte & (1 << relY)) !== 0;
+    }
+    // Z: x from 88 to 102
+    if (x >= 88 && x <= 102) {
+      const relX = Math.floor((x - 88) / 3);
+      const colByte = font['Z'][relX];
+      return (colByte & (1 << relY)) !== 0;
+    }
+  }
+  
+  // 2. Bottom line (SCHEIN): y from 42 to 62 (startY = 62)
+  if (y >= 42 && y <= 62) {
+    const dy = 62 - y;
+    const relY = Math.floor(dy / 3); // 0..6
+    
+    // S: x from 4 to 18
+    if (x >= 4 && x <= 18) {
+      const relX = Math.floor((x - 4) / 3);
+      const colByte = font['S'][relX];
+      return (colByte & (1 << relY)) !== 0;
+    }
+    // C: x from 25 to 39
+    if (x >= 25 && x <= 39) {
+      const relX = Math.floor((x - 25) / 3);
+      const colByte = font['C'][relX];
+      return (colByte & (1 << relY)) !== 0;
+    }
+    // H: x from 46 to 60
+    if (x >= 46 && x <= 60) {
+      const relX = Math.floor((x - 46) / 3);
+      const colByte = font['H'][relX];
+      return (colByte & (1 << relY)) !== 0;
+    }
+    // E: x from 67 to 81
+    if (x >= 67 && x <= 81) {
+      const relX = Math.floor((x - 67) / 3);
+      const colByte = font['E'][relX];
+      return (colByte & (1 << relY)) !== 0;
+    }
+    // I: x from 88 to 102
+    if (x >= 88 && x <= 102) {
+      const relX = Math.floor((x - 88) / 3);
+      const colByte = font['I'][relX];
+      return (colByte & (1 << relY)) !== 0;
+    }
+    // N: x from 109 to 123
+    if (x >= 109 && x <= 123) {
+      const relX = Math.floor((x - 109) / 3);
+      const colByte = font['N'][relX];
+      return (colByte & (1 << relY)) !== 0;
+    }
+  }
+  
+  return false;
+}
+
+// Maps timeline playback progress to song lyrics
+function getLyricsAtTime(time: number): string {
+  if (time >= 5.9 && time < 7.7) return "STEH' VOR DEM CLUB";
+  if (time >= 7.7 && time < 9.6) return "LUST AUF TANZ?";
+  if (time >= 9.6 && time < 11.4) return "SUCHE EKSTASE";
+  if (time >= 11.4 && time < 13.3) return "TIER-OASE";
+  
+  if (time >= 13.3 && time < 15.1) return "GAR NICHT WAHR";
+  if (time >= 15.1 && time < 17.0) return "ZUM AFFEN";
+  if (time >= 17.0 && time < 18.8) return "KEIN TAENZER";
+  if (time >= 18.8 && time < 20.7) return "EINE IDEE";
+  
+  if (time >= 20.7 && time < 22.5) return "EIN KONZEPT";
+  if (time >= 22.5 && time < 24.3) return "PERFEKT!";
+  if (time >= 24.3 && time < 28.0) return "TANZSCHEIN...";
+  
+  if (time >= 28.0 && time < 29.8) return "TANZSCHEIN";
+  if (time >= 29.8 && time < 31.7) return "STRENG SEIN";
+  if (time >= 31.7 && time < 33.5) return "OHNE SCHEIN";
+  if (time >= 33.5 && time < 35.4) return "NICHT REIN";
+  if (time >= 35.4 && time < 37.2) return "TANZSCHEIN?";
+  if (time >= 37.2 && time < 39.1) return "KEIN WITZ";
+  if (time >= 39.1 && time < 40.9) return "OHNE SCHEIN";
+  if (time >= 40.9 && time < 42.8) return "NICHT REIN";
+  if (time >= 42.8 && time <= 45.0) return "TANZEN!";
+  
+  return "";
+}
+
 function applyInteractiveOverrides(key: string, time: number) {
   if (key === 'c' || key === 'g' || key === 'm' || key === 'n') {
     const maskType = key === 'c' ? 'cosmo' : key === 'g' ? 'gazelle' : key === 'm' ? 'gorilla' : 'lion';
@@ -777,11 +1027,11 @@ function applyInteractiveOverrides(key: string, time: number) {
         const color = drawCharacterMask(maskType, x, y, time, beatProgress);
         // Layer the pixel art on top of background by keeping background pixels where mask is black
         if (color.r > 0 || color.g > 0 || color.b > 0) {
-          const buf = getUniverseBuffer(target.universe);
+          const buf = getUniverseBuffer(target.ip, target.universe);
           buf[target.channel] = color.r;
           buf[target.channel + 1] = color.g;
           buf[target.channel + 2] = color.b;
-          dirtyUniverses.add(target.universe);
+          dirtyUniverses.add(`${target.ip}:${target.universe}`);
         }
       }
     }
@@ -809,11 +1059,11 @@ function applyInteractiveOverrides(key: string, time: number) {
           }
         }
 
-        const buf = getUniverseBuffer(target.universe);
+        const buf = getUniverseBuffer(target.ip, target.universe);
         buf[target.channel] = r;
         buf[target.channel + 1] = g;
         buf[target.channel + 2] = b;
-        dirtyUniverses.add(target.universe);
+        dirtyUniverses.add(`${target.ip}:${target.universe}`);
       }
     }
   }
@@ -825,30 +1075,33 @@ function applyInteractiveOverrides(key: string, time: number) {
       values.forEach((val, ch) => {
         const target = activeConfig.entityMap[baseId + ch];
         if (target) {
-          const buf = getUniverseBuffer(target.universe);
+          const buf = getUniverseBuffer(target.ip, target.universe);
           buf[target.channel] = val;
-          dirtyUniverses.add(target.universe);
+          dirtyUniverses.add(`${target.ip}:${target.universe}`);
         }
       });
     }
   }
 }
 
-// Sends a downsampled preview map to frontend to avoid socket lag
+// Sends a preview map to frontend for UI visualization
 function sendPreviewToClients() {
   const previewData: Record<number, number[]> = {};
   
-  // Downsample grid to 32x32 for UI visualization preview (only 1 out of 16 pixels sent!)
-  for (let x = 0; x < 128; x += 4) {
-    for (let y = 0; y < 128; y += 4) {
+  // Send full 128x128 resolution for exact visualizer representation
+  for (let x = 0; x < 128; x++) {
+    for (let y = 0; y < 128; y++) {
       const id = getEntityIdFromGrid(x, y);
       const target = activeConfig.entityMap[id];
       if (target) {
-        const buf = getUniverseBuffer(target.universe);
+        const buf = getUniverseBuffer(target.ip, target.universe);
         const r = buf[target.channel];
         const g = buf[target.channel + 1];
         const b = buf[target.channel + 2];
-        previewData[id] = [r, g, b, 0];
+        // Optimize WebSocket message size: only transmit non-black pixels
+        if (r > 0 || g > 0 || b > 0) {
+          previewData[id] = [r, g, b, 0];
+        }
       }
     }
   }
@@ -859,7 +1112,7 @@ function sendPreviewToClients() {
     for (let ch = 0; ch < 13; ch++) {
       const target = activeConfig.entityMap[baseId + ch];
       if (target) {
-        const buf = getUniverseBuffer(target.universe);
+        const buf = getUniverseBuffer(target.ip, target.universe);
         previewData[baseId + ch] = [buf[target.channel]];
       }
     }
@@ -884,7 +1137,8 @@ function sendBlackout() {
         artnetSender.send(artnetUniverse, buf, { ip: ctrl.ip });
         
         // Reset local cached buffers as well
-        const cached = universeBuffers.get(univ);
+        const key = `${ctrl.ip}:${univ}`;
+        const cached = universeBuffers.get(key);
         if (cached) cached.fill(0);
       });
     });
@@ -945,25 +1199,25 @@ const ehubReceiver = new EHubReceiver(
       const target = activeConfig.entityMap[ent.id];
       if (!target) return;
 
-      const buf = getUniverseBuffer(target.universe);
+      const buf = getUniverseBuffer(target.ip, target.universe);
 
       if (target.type === 'r') {
         buf[target.channel] = ent.r;
         buf[target.channel + 1] = ent.g;
         buf[target.channel + 2] = ent.b;
-        dirtyUniverses.add(target.universe);
+        dirtyUniverses.add(`${target.ip}:${target.universe}`);
       } else if (target.type === 'g') {
         buf[target.channel] = ent.g;
-        dirtyUniverses.add(target.universe);
+        dirtyUniverses.add(`${target.ip}:${target.universe}`);
       } else if (target.type === 'b') {
         buf[target.channel] = ent.b;
-        dirtyUniverses.add(target.universe);
+        dirtyUniverses.add(`${target.ip}:${target.universe}`);
       } else if (target.type === 'w') {
         buf[target.channel] = ent.w;
-        dirtyUniverses.add(target.universe);
+        dirtyUniverses.add(`${target.ip}:${target.universe}`);
       } else if (target.type === 'dmx') {
         buf[target.channel] = ent.w;
-        dirtyUniverses.add(target.universe);
+        dirtyUniverses.add(`${target.ip}:${target.universe}`);
       }
     });
 
@@ -991,7 +1245,7 @@ wss.on('connection', (ws) => {
 
       if (msg.type === 'set-beats') {
         detectedBeats = msg.beats;
-        console.log(`[Audio] Received ${detectedBeats.length} beat timestamps from client.`);
+        console.log(`[Audio] Received ${detectedBeats.length} beat timestamps from client. First 5 beats: ${JSON.stringify(detectedBeats.slice(0, 5))}`);
         broadcastToClients({ type: 'log', message: `Synchronized ${detectedBeats.length} beat triggers with server.` });
       } else if (msg.type === 'play') {
         activeTestPattern = null;
@@ -1151,21 +1405,25 @@ app.get('/api/test-pattern', (req, res) => {
       const controllerIdx = Math.floor(Math.floor(x / 2) / 16);
       const [r, g, b] = colors[controllerIdx] || [128, 128, 128];
 
-      const buf = getUniverseBuffer(target.universe);
+      const buf = getUniverseBuffer(target.ip, target.universe);
       buf[target.channel] = r;
       buf[target.channel + 1] = g;
       buf[target.channel + 2] = b;
-      dirtyUniverses.add(target.universe);
+      dirtyUniverses.add(`${target.ip}:${target.universe}`);
     }
   }
 
   // Immediately send to all controllers
-  dirtyUniverses.forEach((univ) => {
-    const route = universeRouteMap.get(univ);
-    if (route) {
-      const buf = universeBuffers.get(univ);
+  dirtyUniverses.forEach((key) => {
+    const [ip, univStr] = key.split(':');
+    const univ = parseInt(univStr, 10);
+    const ctrl = activeConfig.controllers.find(c => c.ip === ip);
+    if (ctrl) {
+      const offset = ctrl.startUniverse ?? 0;
+      const artnetUniverse = univ < offset ? univ : univ - offset;
+      const buf = universeBuffers.get(key);
       if (buf) {
-        artnetSender.send(route.artnetUniverse, buf, { ip: route.ip });
+        artnetSender.send(artnetUniverse, buf, { ip });
       }
     }
   });

@@ -3,7 +3,7 @@ export class AudioEngine {
   private isPlaying = false;
   
   // Software offset in seconds to skip the silence at the beginning of the MP3.
-  // You can easily adjust this value (e.g. to 4.8 or 5.2) if the start is not perfectly aligned.
+  // Aligned with the beginning of the guitar intro at 5.0s.
   private readonly AUDIO_START_OFFSET = 5.0;
 
   constructor() {

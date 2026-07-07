@@ -22,14 +22,9 @@ export const Visualizer: React.FC<VisualizerProps> = ({ frameState, config }) =>
     const data = imgData.data;
 
     // Loop through 2D coordinate grid (x: 0..127, y: 0..127)
-    // Map each coordinate to the nearest 4x4 block (since backend sends downsampled 32x32 frames)
     for (let x = 0; x < 128; x++) {
       for (let y = 0; y < 128; y++) {
-        // Map x and target y to their nearest 4-step increments
-        const blockX = Math.floor(x / 4) * 4;
-        const blockY = Math.floor((127 - y) / 4) * 4;
-
-        const entityId = getEntityIdFromGrid(blockX, blockY);
+        const entityId = getEntityIdFromGrid(x, 127 - y);
         const color = frameState[entityId] || [0, 0, 0, 0];
 
         // Pixel index in 1D array
