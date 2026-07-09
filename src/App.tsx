@@ -81,8 +81,26 @@ interface DmxMonitorState {
   entityCount: number;
 }
 
+interface EHubMonitorState {
+  listeningPort: number;
+  packetsPerSec: number;
+  totalPacketsThisSecond: number;
+  mappedEntityCount: number;
+  loopRunning: boolean;
+  lastPacket: null | {
+    receivedAt: number;
+    entityCount: number;
+    mappedCount: number;
+    unmappedCount: number;
+    dirtyUniverses: string[];
+    sample: Array<{ id: number; r: number; g: number; b: number; w: number }>;
+    source: 'udp' | 'fake';
+  };
+  recentPackets: Array<NonNullable<EHubMonitorState['lastPacket']>>;
+}
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'timeline' | 'images' | 'debug' | 'config'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'timeline' | 'images' | 'debug' | 'ehub' | 'config'>('dashboard');
   const [wsConnected, setWsConnected] = useState(false);
   const [telemetry, setTelemetry] = useState<any>({ fps: 0, packetsPerSec: 0, kbps: 0, ehubPacketsPerSec: 0 });
   const [currentTime, setCurrentTime] = useState(0);
@@ -128,6 +146,7 @@ export default function App() {
   const [dmxMonitor, setDmxMonitor] = useState<DmxMonitorState | null>(null);
   const [selectedUniverseKey, setSelectedUniverseKey] = useState('');
   const [inspectEntityId, setInspectEntityId] = useState('100');
+  const [ehubMonitor, setEhubMonitor] = useState<EHubMonitorState | null>(null);
 
   const addLog = (msg: string) => {
     setConsoleLogs((prev) => [ `[${new Date().toLocaleTimeString()}] ${msg}`, ...prev.slice(0, 15) ]);
@@ -300,6 +319,28 @@ export default function App() {
       window.clearInterval(interval);
     };
   }, [activeTab, selectedUniverseKey, inspectEntityId]);
+
+  useEffect(() => {
+    if (activeTab !== 'ehub') return;
+    let cancelled = false;
+
+    const loadEhubMonitor = async () => {
+      try {
+        const response = await fetch('/api/ehub-monitor');
+        const data = await response.json();
+        if (!cancelled) setEhubMonitor(data);
+      } catch (e) {
+        addLog(`eHub monitor error: ${(e as Error).message}`);
+      }
+    };
+
+    loadEhubMonitor();
+    const interval = window.setInterval(loadEhubMonitor, 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [activeTab]);
 
   // Sync Synthesizer with backend playback state
   useEffect(() => {
@@ -705,6 +746,13 @@ export default function App() {
           onClick={() => setActiveTab('debug')}
         >
           <Radio size={16} style={{ marginRight: '6px', display: 'inline' }} /> Debug Monitor
+        </button>
+        <button
+          className="secondary"
+          style={{ borderRadius: '0', borderBottom: activeTab === 'ehub' ? '2px solid var(--color-red)' : 'none', color: activeTab === 'ehub' ? 'var(--text-primary)' : 'var(--text-secondary)' }}
+          onClick={() => setActiveTab('ehub')}
+        >
+          <Cpu size={16} style={{ marginRight: '6px', display: 'inline' }} /> eHub Monitor
         </button>
         <button
           className="secondary"
@@ -1522,6 +1570,87 @@ export default function App() {
                       </button>
                     ))
                   )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'ehub' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', flex: 1 }}>
+            <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <div>
+                  <h3 style={{ fontSize: '1.1rem' }}>Unity eHub Monitor</h3>
+                  <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>UDP state input routed into the same ArtNet pipeline as the show engine.</span>
+                </div>
+                <button
+                  onClick={async () => {
+                    try {
+                      const response = await fetch('/api/ehub/fake', { method: 'POST' });
+                      const data = await response.json();
+                      addLog(`Fake eHub packet routed: ${data.entityCount} entities.`);
+                      const monitor = await fetch('/api/ehub-monitor');
+                      setEhubMonitor(await monitor.json());
+                    } catch (e) {
+                      addLog(`Fake eHub failed: ${(e as Error).message}`);
+                    }
+                  }}
+                >
+                  Send Fake eHub Packet
+                </button>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: '10px' }}>
+                {[
+                  ['Port', String(ehubMonitor?.listeningPort ?? 5000), 'var(--color-cyan)'],
+                  ['Packets/s', String(ehubMonitor?.packetsPerSec ?? 0), '#22c55e'],
+                  ['Last entities', String(ehubMonitor?.lastPacket?.entityCount ?? 0), 'var(--color-gold)'],
+                  ['Mapped', `${ehubMonitor?.lastPacket?.mappedCount ?? 0}/${ehubMonitor?.lastPacket?.entityCount ?? 0}`, '#22c55e'],
+                  ['Loop', ehubMonitor?.loopRunning ? 'RUNNING' : 'IDLE', ehubMonitor?.loopRunning ? '#22c55e' : 'var(--text-muted)'],
+                ].map(([label, value, color]) => (
+                  <div key={label} style={{ backgroundColor: 'var(--bg-base)', border: '1px solid var(--border-muted)', borderRadius: '6px', padding: '10px' }}>
+                    <span style={{ display: 'block', fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>{label}</span>
+                    <span style={{ fontFamily: 'JetBrains Mono', color }}>{value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+              <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <h3 style={{ fontSize: '1rem' }}>Recent eHub Packets</h3>
+                <div style={{ maxHeight: '360px', overflowY: 'auto', fontFamily: 'JetBrains Mono', fontSize: '0.76rem' }}>
+                  {(ehubMonitor?.recentPackets || []).length === 0 ? (
+                    <div style={{ color: 'var(--text-muted)' }}>No eHub packet received yet. Use fake packet or start Unity.</div>
+                  ) : (
+                    ehubMonitor!.recentPackets.map((packet, idx) => (
+                      <div key={`${packet.receivedAt}-${idx}`} style={{ display: 'grid', gridTemplateColumns: '0.7fr 0.9fr 0.9fr 0.9fr 1fr', gap: '8px', padding: '8px 0', borderBottom: '1px solid var(--border-muted)' }}>
+                        <span className={`badge ${packet.source === 'fake' ? 'badge-gold' : 'badge-green'}`}>{packet.source}</span>
+                        <span>{packet.entityCount} ent</span>
+                        <span>{packet.mappedCount} mapped</span>
+                        <span>{packet.unmappedCount} missed</span>
+                        <span>{Date.now() - packet.receivedAt}ms ago</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <h3 style={{ fontSize: '1rem' }}>Last Packet Sample</h3>
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                  {(ehubMonitor?.lastPacket?.dirtyUniverses || []).map((key) => (
+                    <span key={key} className="badge badge-cyan" style={{ fontFamily: 'JetBrains Mono' }}>{key}</span>
+                  ))}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '8px', fontFamily: 'JetBrains Mono', fontSize: '0.75rem' }}>
+                  {(ehubMonitor?.lastPacket?.sample || []).map((entity) => (
+                    <div key={entity.id} style={{ backgroundColor: 'var(--bg-base)', border: '1px solid var(--border-muted)', borderRadius: '6px', padding: '8px' }}>
+                      <div style={{ color: 'var(--color-gold)' }}>#{entity.id}</div>
+                      <div>R {entity.r} · G {entity.g} · B {entity.b} · W {entity.w}</div>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>

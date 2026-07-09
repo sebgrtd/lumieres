@@ -7,7 +7,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { exec } from 'child_process';
 import { ArtNetSender } from './src/router/artnet.ts';
-import { EHubReceiver } from './src/router/ehub.ts';
+import { EHubReceiver, type EntityState } from './src/router/ehub.ts';
 import {
   buildConfigFromHardware,
   generateDefaultConfig,
@@ -317,6 +317,69 @@ let currentTelemetry: TelemetryState = {
 let activeTestPattern: { type: 'controller' | 'all'; controllerIdx?: number; color?: number[] } | null = null;
 let activeImageFrame: { width: number; height: number; rgba: Uint8Array } | null = null;
 let benchmarkActive = false;
+const recentEHubPackets: Array<{
+  receivedAt: number;
+  entityCount: number;
+  mappedCount: number;
+  unmappedCount: number;
+  dirtyUniverses: string[];
+  sample: EntityState[];
+  source: 'udp' | 'fake';
+}> = [];
+
+function routeEHubEntities(entities: EntityState[], source: 'udp' | 'fake' = 'udp') {
+  stats.ehubPacketsReceived++;
+  let mappedCount = 0;
+  let unmappedCount = 0;
+  const packetDirtyUniverses = new Set<string>();
+
+  entities.forEach((ent) => {
+    const target = activeConfig.entityMap[ent.id];
+    if (!target) {
+      unmappedCount++;
+      return;
+    }
+    mappedCount++;
+
+    const buf = getUniverseBuffer(target.ip, target.universe);
+    const dirtyKey = `${target.ip}:${target.universe}`;
+
+    if (target.type === 'r') {
+      buf[target.channel] = ent.r;
+      buf[target.channel + 1] = ent.g;
+      buf[target.channel + 2] = ent.b;
+    } else if (target.type === 'g') {
+      buf[target.channel] = ent.g;
+    } else if (target.type === 'b') {
+      buf[target.channel] = ent.b;
+    } else if (target.type === 'w') {
+      buf[target.channel] = ent.w;
+    } else if (target.type === 'dmx') {
+      buf[target.channel] = ent.w;
+    }
+    dirtyUniverses.add(dirtyKey);
+    packetDirtyUniverses.add(dirtyKey);
+  });
+
+  recentEHubPackets.unshift({
+    receivedAt: Date.now(),
+    entityCount: entities.length,
+    mappedCount,
+    unmappedCount,
+    dirtyUniverses: Array.from(packetDirtyUniverses),
+    sample: entities.slice(0, 12),
+    source,
+  });
+  if (recentEHubPackets.length > 40) recentEHubPackets.pop();
+
+  if (!isPlaying && source === 'udp') {
+    isPlaying = true;
+    playbackStartRealTime = Date.now() - playbackTime * 1000;
+    updateRouterState();
+  } else {
+    updateRouterState();
+  }
+}
 
 function startShowFromBeginning() {
   activeTestPattern = null;
@@ -1742,39 +1805,7 @@ function broadcastToClients(message: any) {
 const ehubReceiver = new EHubReceiver(
   5000,
   (entities) => {
-    stats.ehubPacketsReceived++;
-    
-    entities.forEach((ent) => {
-      const target = activeConfig.entityMap[ent.id];
-      if (!target) return;
-
-      const buf = getUniverseBuffer(target.ip, target.universe);
-
-      if (target.type === 'r') {
-        buf[target.channel] = ent.r;
-        buf[target.channel + 1] = ent.g;
-        buf[target.channel + 2] = ent.b;
-        dirtyUniverses.add(`${target.ip}:${target.universe}`);
-      } else if (target.type === 'g') {
-        buf[target.channel] = ent.g;
-        dirtyUniverses.add(`${target.ip}:${target.universe}`);
-      } else if (target.type === 'b') {
-        buf[target.channel] = ent.b;
-        dirtyUniverses.add(`${target.ip}:${target.universe}`);
-      } else if (target.type === 'w') {
-        buf[target.channel] = ent.w;
-        dirtyUniverses.add(`${target.ip}:${target.universe}`);
-      } else if (target.type === 'dmx') {
-        buf[target.channel] = ent.w;
-        dirtyUniverses.add(`${target.ip}:${target.universe}`);
-      }
-    });
-
-    if (!isPlaying) {
-      isPlaying = true;
-      playbackStartRealTime = Date.now() - playbackTime * 1000;
-      updateRouterState();
-    }
+    routeEHubEntities(entities, 'udp');
   },
   (id) => !!activeConfig.entityMap[id] // validation function to auto-detect LE/BE
 );
@@ -2160,6 +2191,52 @@ app.get('/api/dmx-monitor', (req, res) => {
       lastUniverse: ctrl.universes[ctrl.universes.length - 1],
     })),
     entityCount: Object.keys(activeConfig.entityMap).length,
+  });
+});
+
+app.get('/api/ehub-monitor', (_req, res) => {
+  const lastPacket = recentEHubPackets[0] || null;
+  res.json({
+    listeningPort: 5000,
+    packetsPerSec: currentTelemetry.ehubPacketsPerSec,
+    totalPacketsThisSecond: stats.ehubPacketsReceived,
+    lastPacket,
+    recentPackets: recentEHubPackets,
+    mappedEntityCount: Object.keys(activeConfig.entityMap).length,
+    loopRunning: routeInterval !== null,
+  });
+});
+
+app.post('/api/ehub/fake', (_req, res) => {
+  const wallEntityIds = Object.keys(activeConfig.entityMap)
+    .map((id) => Number(id))
+    .filter((id) => Number.isFinite(id) && id < 30000)
+    .slice(0, 240);
+  const now = Date.now() / 1000;
+  const entities: EntityState[] = wallEntityIds.map((id, index) => ({
+    id,
+    r: Math.round(127 + 128 * Math.sin(now * 3 + index * 0.08)),
+    g: Math.round(127 + 128 * Math.sin(now * 4 + index * 0.05)),
+    b: Math.round(127 + 128 * Math.sin(now * 5 + index * 0.03)),
+    w: 0,
+  }));
+
+  const movingHeadIds = [34100, 34200, 34300, 34400];
+  movingHeadIds.forEach((baseId, index) => {
+    entities.push(
+      { id: baseId, r: 0, g: 0, b: 0, w: Math.round(127 + 90 * Math.sin(now + index)) },
+      { id: baseId + 2, r: 0, g: 0, b: 0, w: Math.round(140 + 50 * Math.cos(now + index)) },
+      { id: baseId + 5, r: 0, g: 0, b: 0, w: 255 },
+      { id: baseId + 7, r: 0, g: 0, b: 0, w: index % 2 === 0 ? 100 : 180 },
+    );
+  });
+
+  routeEHubEntities(entities, 'fake');
+  res.json({
+    success: true,
+    message: 'Fake eHub packet routed.',
+    entityCount: entities.length,
+    sample: entities.slice(0, 8),
   });
 });
 
