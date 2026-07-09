@@ -8,6 +8,8 @@
     "dev:client": "vite",
     "dev:server": "tsx server.ts",
     "build": "vite build",
+    "test": "npm run test:mapping",
+    "test:mapping": "tsx tests/mapping.test.ts",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview"
   },
