@@ -95,6 +95,8 @@ function rebuildUniverseRouteMap() {
 
 // Per-IP packet stats for diagnostics
 const packetCountPerIp: Map<string, number> = new Map();
+const lastArtNetPackets: Array<{ ip: string; universe: number; artnetUniverse: number; bytes: number; sentAt: number }> = [];
+let lastDirtyUniverseKeys: string[] = [];
 
 const DESIGN_WIDTH = 128;
 const DESIGN_HEIGHT = 128;
@@ -409,10 +411,13 @@ function updateRouterState() {
               stats.packetsSent++;
               stats.bytesSent += 18 + buf.length;
               packetCountPerIp.set(ip, (packetCountPerIp.get(ip) || 0) + 1);
+              lastArtNetPackets.unshift({ ip, universe: univ, artnetUniverse, bytes: buf.length, sentAt: Date.now() });
+              if (lastArtNetPackets.length > 80) lastArtNetPackets.pop();
             }
           }
         });
 
+        lastDirtyUniverseKeys = Array.from(dirtyUniverses);
         dirtyUniverses.clear();
         stats.framesProcessed++;
 
@@ -2014,6 +2019,66 @@ app.get('/api/debug', (_req, res) => {
     activeOverride,
     playbackTime,
     bufferCount: universeBuffers.size,
+  });
+});
+
+app.get('/api/dmx-monitor', (req, res) => {
+  const universeKey = typeof req.query.universeKey === 'string' ? req.query.universeKey : '';
+  const entityId = typeof req.query.entityId === 'string' ? Number(req.query.entityId) : NaN;
+  const availableUniverses = Array.from(universeBuffers.keys()).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const selectedKey = universeBuffers.has(universeKey) ? universeKey : availableUniverses[0];
+  const selectedBuffer = selectedKey ? universeBuffers.get(selectedKey) : undefined;
+  const selectedBytes = selectedBuffer ? Array.from(selectedBuffer) : [];
+  const nonZeroChannels = selectedBytes
+    .map((value, channel) => ({ channel, value }))
+    .filter((entry) => entry.value !== 0)
+    .slice(0, 96);
+
+  const inspectedEntity = Number.isFinite(entityId)
+    ? {
+        id: entityId,
+        target: activeConfig.entityMap[entityId] || null,
+        value: (() => {
+          const target = activeConfig.entityMap[entityId];
+          if (!target) return null;
+          const buf = getUniverseBuffer(target.ip, target.universe);
+          return {
+            channel: target.channel,
+            bytes: Array.from(buf.slice(target.channel, Math.min(512, target.channel + 4))),
+          };
+        })(),
+      }
+    : null;
+
+  res.json({
+    generatedAt: Date.now(),
+    loopRunning: routeInterval !== null,
+    isPlaying,
+    activeOverride,
+    activeTestPattern,
+    activePreviewBlock: activePreviewBlock ? { id: activePreviewBlock.id, name: activePreviewBlock.name, lane: activePreviewBlock.lane } : null,
+    activeImageFrame: activeImageFrame ? { width: activeImageFrame.width, height: activeImageFrame.height } : null,
+    bufferCount: universeBuffers.size,
+    dirtyUniverses: lastDirtyUniverseKeys,
+    availableUniverses,
+    selectedUniverse: selectedKey
+      ? {
+          key: selectedKey,
+          nonZeroCount: selectedBytes.filter((value) => value !== 0).length,
+          firstChannels: selectedBytes.slice(0, 96),
+          nonZeroChannels,
+        }
+      : null,
+    lastArtNetPackets: lastArtNetPackets.slice(0, 40),
+    inspectedEntity,
+    controllers: activeConfig.controllers.map((ctrl) => ({
+      ip: ctrl.ip,
+      startUniverse: ctrl.startUniverse ?? 0,
+      universeCount: ctrl.universes.length,
+      firstUniverse: ctrl.universes[0],
+      lastUniverse: ctrl.universes[ctrl.universes.length - 1],
+    })),
+    entityCount: Object.keys(activeConfig.entityMap).length,
   });
 });
 
