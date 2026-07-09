@@ -1840,6 +1840,13 @@ wss.on('connection', (ws) => {
       } else if (msg.type === 'demo-start') {
         startShowFromBeginning();
         broadcastToClients({ type: 'log', message: 'Final demo mode started from 0.00s.' });
+      } else if (msg.type === 'pause') {
+        benchmarkActive = false;
+        activePreviewBlock = null;
+        activeTestPattern = null;
+        activeImageFrame = null;
+        isPlaying = false;
+        updateRouterState();
       } else if (msg.type === 'stop') {
         benchmarkActive = false;
         activePreviewBlock = null;

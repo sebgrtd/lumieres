@@ -3,12 +3,12 @@ export async function analyzeAudioBeats(onProgress: (msg: string) => void): Prom
     const AUDIO_START_OFFSET = 30.0;
     const SHOW_DURATION = 45.0;
 
-    onProgress("Téléchargement du fichier tanzschein.mp3...");
+    onProgress("Telechargement du fichier tanzschein.mp3...");
     const response = await fetch('/tanzschein.mp3');
     if (!response.ok) throw new Error("Fichier MP3 introuvable dans le dossier public.");
     
     const arrayBuffer = await response.arrayBuffer();
-    onProgress("Décodage de l'audio MP3 (PCM)...");
+    onProgress("Decodage de l'audio MP3 (PCM)...");
     
     const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
     const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
@@ -18,33 +18,33 @@ export async function analyzeAudioBeats(onProgress: (msg: string) => void): Prom
     const sampleRate = audioBuffer.sampleRate;
     
     const peaks: number[] = [];
-    const windowSize = Math.floor(sampleRate * 0.02); // Fenêtre de 20ms
+    const windowSize = Math.floor(sampleRate * 0.02); // Fenetre de 20ms
     const stepSize = Math.floor(sampleRate * 0.01); // Pas de 10ms
     
     let lastPeakTime = -1;
-    // Seuil de détection des transitoires d'énergie
+    // Seuil de detection des transitoires d'energie
     const threshold = 0.38; 
     
     for (let i = 0; i < channelData.length - windowSize; i += stepSize) {
       const time = i / sampleRate;
       if (time < AUDIO_START_OFFSET) continue;
-      if (time > AUDIO_START_OFFSET + SHOW_DURATION) break; // Limiter aux 45 secondes jouées
+      if (time > AUDIO_START_OFFSET + SHOW_DURATION) break; // Limiter aux 45 secondes jouees
       
-      // Calculer l'amplitude maximale absolue dans la fenêtre
+      // Calculer l'amplitude maximale absolue dans la fenetre
       let maxVal = 0;
       for (let j = 0; j < windowSize; j++) {
         const val = Math.abs(channelData[i + j]);
         if (val > maxVal) maxVal = val;
       }
       
-      // Si la valeur dépasse le seuil et qu'on a un écart de 220ms minimum (rythme à 130 BPM)
+      // Si la valeur depasse le seuil et qu'on a un ecart de 220ms minimum (rythme a 130 BPM)
       if (maxVal > threshold && (time - lastPeakTime) > 0.22) {
         peaks.push(parseFloat((time - AUDIO_START_OFFSET).toFixed(2)));
         lastPeakTime = time;
       }
     }
     
-    onProgress(`Analyse terminée ! ${peaks.length} impacts rythmiques détectés.`);
+    onProgress(`Analyse terminee ! ${peaks.length} impacts rythmiques detectes.`);
     console.log("=== TIMESTAMP DES IMPACTS RYTHMIQUES (45s) ===");
     console.log(JSON.stringify(peaks));
     return peaks;

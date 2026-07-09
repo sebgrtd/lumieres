@@ -165,7 +165,7 @@ export default function App() {
 
   const runPingDiagnostics = async () => {
     setIsPinging(true);
-    addLog('Démarrage du diagnostic ping des contrôleurs...');
+    addLog('Demarrage du diagnostic ping des controleurs...');
     try {
       const response = await fetch('/api/ping');
       const data = await response.json();
@@ -173,7 +173,7 @@ export default function App() {
         const resultsMap: Record<string, { status: string; latency: string }> = {};
         data.results.forEach((res: any) => {
           resultsMap[res.ip] = { status: res.status, latency: res.latency };
-          addLog(`  IP ${res.ip}: ${res.status === 'ONLINE' ? '🟢 EN LIGNE' : '🔴 HORS LIGNE'} (${res.latency})`);
+          addLog(`  IP ${res.ip}: ${res.status === 'ONLINE' ? 'EN LIGNE' : 'HORS LIGNE'} (${res.latency})`);
         });
         setPingStatus(resultsMap);
       } else {
@@ -362,18 +362,22 @@ export default function App() {
     }
   }, [isPlaying]);
 
-  const handlePlay = () => {
+  const handleResumePause = () => {
     blurAll();
     setPreviewingBlockId(null);
     if (isPlaying) {
       setIsPlaying(false);
       addLog('Show paused.');
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: 'stop' }));
+        wsRef.current.send(JSON.stringify({ type: 'pause' }));
       }
     } else {
+      if (currentTimeRef.current <= 0.05) {
+        addLog('Use RESTART FROM 0 to start a fresh demo. Current Playback only resumes a paused show.');
+        return;
+      }
       setIsPlaying(true);
-      addLog('Show playing...');
+      addLog(`Show resumed from ${currentTimeRef.current.toFixed(2)}s.`);
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({ type: 'play' }));
       }
@@ -405,7 +409,7 @@ export default function App() {
     }
   };
 
-  const handleFinalDemo = async () => {
+  const handleRestartFinalDemo = async () => {
     blurAll();
     setActiveTab('dashboard');
 
@@ -429,7 +433,7 @@ export default function App() {
       wsRef.current.send(JSON.stringify({ type: 'demo-start' }));
     }
 
-    addLog('FINAL DEMO MODE: timeline, audio and ArtNet restarted from 0.00s.');
+    addLog('FINAL DEMO MODE: saved, synced and restarted from 0.00s.');
   };
 
   const sortTimelineBlocks = (nextBlocks: TimelineBlock[]) => (
@@ -711,10 +715,10 @@ export default function App() {
       {/* 1. Header */}
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 24px', backgroundColor: 'var(--bg-surface)', borderBottom: '1px solid var(--border-muted)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <span style={{ fontSize: '2rem' }}>🇦🇹</span>
+          <span style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>AT</span>
           <div>
-            <h1 style={{ fontSize: '1.4rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Österreich</h1>
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Son & Lumière Master Controller</span>
+            <h1 style={{ fontSize: '1.4rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>OSTERREICH</h1>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Son & Lumiere Master Controller</span>
           </div>
         </div>
 
@@ -792,18 +796,137 @@ export default function App() {
         {activeTab === 'dashboard' && (
           <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '24px', flex: 1 }}>
             
-            <Visualizer frameState={frameState} config={config} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <Visualizer frameState={frameState} config={config} />
+
+              {/* Diagnostic Panel */}
+              <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <h3 style={{ fontSize: '1.1rem', color: 'var(--text-primary)' }}>Diagnostic Reseau</h3>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button
+                    onClick={() => {
+                      blurAll();
+                      runPingDiagnostics();
+                    }}
+                    disabled={isPinging}
+                    style={{ backgroundColor: 'var(--color-accent)', fontSize: '0.8rem', padding: '8px 14px' }}
+                  >
+                    {isPinging ? 'Diagnostic...' : 'Tester Connectivite Wifi (Ping)'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      blurAll();
+                      addLog('Sending TEST ALL controllers...');
+                      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                        wsRef.current.send(JSON.stringify({ type: 'test-all' }));
+                      }
+                    }}
+                    style={{ 
+                      backgroundColor: telemetry.activeTestPattern?.type === 'all' ? 'hsl(260, 80%, 55%)' : 'hsl(260, 60%, 45%)', 
+                      fontSize: '0.8rem', 
+                      padding: '8px 14px',
+                      border: telemetry.activeTestPattern?.type === 'all' ? '2px solid white' : 'none',
+                      borderRadius: '6px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {telemetry.activeTestPattern?.type === 'all' ? 'STOP TEST ALL' : 'Test ALL (R/G/B/Y)'}
+                  </button>
+                  {(config?.controllers || []).map((ctrl: any, i: number) => {
+                    const colors = ['#ef4444', '#22c55e', '#3b82f6', '#eab308'];
+                    const labels = ['RED', 'GREEN', 'BLUE', 'YELLOW'];
+                    const isActive = telemetry.activeTestPattern?.type === 'controller' && telemetry.activeTestPattern?.controllerIdx === i;
+                    return (
+                      <button
+                        key={i}
+                        onClick={() => {
+                          blurAll();
+                          const colorMap = [[255,0,0],[0,255,0],[0,0,255],[255,255,0]];
+                          addLog(`Testing controller ${ctrl.ip} (${labels[i]})...`);
+                          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                            wsRef.current.send(JSON.stringify({ type: 'test-controller', controllerIdx: i, color: colorMap[i] }));
+                          }
+                        }}
+                        style={{ 
+                          backgroundColor: colors[i], 
+                          color: i === 3 ? '#000' : '#fff', 
+                          fontSize: '0.75rem', 
+                          padding: '6px 10px',
+                          border: isActive ? '2px solid #ffffff' : '1px solid rgba(255,255,255,0.1)',
+                          boxShadow: isActive ? `0 0 12px ${colors[i]}` : 'none',
+                          fontWeight: isActive ? 'bold' : 'normal',
+                          borderRadius: '6px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {isActive ? `${labels[i]} (Streaming)` : ctrl.ip}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {Object.keys(pingStatus).length > 0 && (
+                  <div style={{ fontSize: '0.8rem', backgroundColor: 'var(--bg-base)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-muted)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.7rem', textTransform: 'uppercase', fontWeight: 'bold' }}>Resultats Ping Wifi</div>
+                    {Object.entries(pingStatus).map(([ip, data]: any) => (
+                      <div key={ip} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontFamily: 'JetBrains Mono', color: 'var(--text-primary)' }}>{ip}</span>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                          <span style={{ fontSize: '0.75rem', fontFamily: 'JetBrains Mono', color: 'var(--text-muted)' }}>{data.latency}</span>
+                          <span className={`badge ${data.status === 'ONLINE' ? 'badge-green' : 'badge-red'}`} style={{ fontSize: '0.7rem', padding: '2px 6px' }}>
+                            {data.status}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {telemetry.packetCountPerIp && (
+                  <div style={{ fontSize: '0.8rem', fontFamily: 'JetBrains Mono', backgroundColor: 'var(--bg-base)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-muted)' }}>
+                    <div style={{ marginBottom: '6px', color: 'var(--text-secondary)', fontSize: '0.7rem', textTransform: 'uppercase' }}>Packets envoyes par controleur (total)</div>
+                    {Object.entries(telemetry.packetCountPerIp).length === 0 ? (
+                      <div style={{ color: 'var(--text-muted)' }}>Aucun paquet envoye</div>
+                    ) : (
+                      Object.entries(telemetry.packetCountPerIp).map(([ip, count]) => (
+                        <div key={ip} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
+                          <span style={{ color: 'var(--text-primary)' }}>{ip}</span>
+                          <span style={{ color: (count as number) > 0 ? '#22c55e' : '#ef4444' }}>{String(count)} pkts</span>
+                        </div>
+                      ))
+                    )}
+                    <div style={{ marginTop: '6px', borderTop: '1px solid var(--border-muted)', paddingTop: '6px', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                      Loop: {telemetry.loopRunning ? 'Running' : 'Stopped'}
+                      {' | '}
+                      Override: {telemetry.activeOverride || 'none'}
+                      {' | '}
+                      Playing: {telemetry.isPlaying ? 'Yes' : 'No'}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Console log */}
+              <div className="card" style={{ display: 'flex', flexDirection: 'column', minHeight: '220px' }}>
+                <h3 style={{ fontSize: '1.1rem', color: 'var(--text-primary)', marginBottom: '10px' }}>DMX Packet Monitor & Logger</h3>
+                <div style={{ flex: 1, backgroundColor: 'hsl(224, 25%, 4%)', borderRadius: '8px', padding: '12px', fontFamily: 'JetBrains Mono', fontSize: '0.8rem', overflowY: 'auto', border: '1px solid var(--border-muted)', color: '#22c55e' }}>
+                  {consoleLogs.map((log, i) => (
+                    <div key={i} style={{ marginBottom: '4px' }}>{log}</div>
+                  ))}
+                </div>
+              </div>
+            </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
               {/* Final demo proof panel */}
               <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '14px', border: '1px solid var(--color-gold)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
                   <div>
-                    <h3 style={{ fontSize: '1.1rem', color: 'var(--text-primary)' }}>Final Demo Mode</h3>
-                    <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>COSMÓ - Tanzschein / {SHOW_DURATION_SECONDS}s synchronized show</span>
+                    <h3 style={{ fontSize: '1.1rem', color: 'var(--text-primary)' }}>Restart Final Demo</h3>
+                    <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>COSMO - Tanzschein / {SHOW_DURATION_SECONDS}s synchronized show</span>
                   </div>
                   <button
-                    onClick={handleFinalDemo}
+                    onClick={handleRestartFinalDemo}
                     disabled={!demoReady || isAnalyzing}
                     style={{
                       display: 'flex',
@@ -817,7 +940,7 @@ export default function App() {
                     }}
                   >
                     <Play size={18} />
-                    {isAnalyzing ? 'SYNCING AUDIO' : 'START FINAL DEMO'}
+                    {isAnalyzing ? 'SYNCING AUDIO' : 'RESTART FROM 0'}
                   </button>
                 </div>
 
@@ -844,23 +967,15 @@ export default function App() {
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                  <span className={`badge ${wsConnected ? 'badge-green' : 'badge-red'}`}>WebSocket</span>
-                  <span className={`badge ${detectedBeatsCount ? 'badge-green' : 'badge-gold'}`}>{detectedBeatsCount ? `${detectedBeatsCount} beats synced` : 'Audio analysis pending'}</span>
-                  <span className={`badge ${showDirty ? 'badge-red' : 'badge-green'}`}>{showDirty ? 'Save show pending' : 'Show saved'}</span>
-                  <span className={`badge ${configuredControllers > 0 ? 'badge-green' : 'badge-red'}`}>Physical config</span>
-                  <span className={`badge ${telemetry.droppedFrames === 0 ? 'badge-green' : 'badge-red'}`}>{telemetry.droppedFrames ?? 0} dropped</span>
-                  <span className="badge badge-cyan">{telemetry.avgFrameTimeMs ?? 0}ms avg</span>
-                </div>
-              </div>
-
-              {/* Playback controls */}
-              <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <h3 style={{ fontSize: '1.1rem', color: 'var(--text-primary)' }}>Playback Controller</h3>
-                <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                  <button onClick={handlePlay} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap', paddingTop: '2px' }}>
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', minWidth: '120px' }}>Current playback</span>
+                  <button
+                    onClick={handleResumePause}
+                    disabled={!isPlaying && currentTime <= 0.05}
+                    style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+                  >
                     {isPlaying ? <Pause size={18} /> : <Play size={18} />}
-                    {isPlaying ? 'PAUSE' : 'PLAY SHOW'}
+                    {isPlaying ? 'PAUSE CURRENT' : currentTime > 0.05 ? 'RESUME CURRENT' : 'NO PAUSED SHOW'}
                   </button>
                   <button className="secondary" onClick={handleStop} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <Square size={18} />
@@ -878,12 +993,15 @@ export default function App() {
                   >
                     BLACKOUT
                   </button>
-                  <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block' }}>Playback Time</span>
-                    <span style={{ fontSize: '1.3rem', fontFamily: 'JetBrains Mono', fontWeight: 'bold' }}>
-                      {currentTime.toFixed(2)}s
-                    </span>
-                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <span className={`badge ${wsConnected ? 'badge-green' : 'badge-red'}`}>WebSocket</span>
+                  <span className={`badge ${detectedBeatsCount ? 'badge-green' : 'badge-gold'}`}>{detectedBeatsCount ? `${detectedBeatsCount} beats synced` : 'Audio analysis pending'}</span>
+                  <span className={`badge ${showDirty ? 'badge-red' : 'badge-green'}`}>{showDirty ? 'Save show pending' : 'Show saved'}</span>
+                  <span className={`badge ${configuredControllers > 0 ? 'badge-green' : 'badge-red'}`}>Physical config</span>
+                  <span className={`badge ${telemetry.droppedFrames === 0 ? 'badge-green' : 'badge-red'}`}>{telemetry.droppedFrames ?? 0} dropped</span>
+                  <span className="badge badge-cyan">{telemetry.avgFrameTimeMs ?? 0}ms avg</span>
                 </div>
               </div>
 
@@ -895,13 +1013,13 @@ export default function App() {
                 </p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {[
-                    { key: 'space', label: '⬜ Austrian Flag Cross', color: 'badge-red', kbd: 'ESPACE' },
-                    { key: 'a', label: '✨ Gold Imperial Sparkles', color: 'badge-gold', kbd: 'A' },
-                    { key: 'l', label: '💡 Lyres Sky Strobe', color: 'badge-cyan', kbd: 'L' },
-                    { key: 'c', label: '🎤 Singer COSMÓ (Star Eye)', color: 'badge-blue', kbd: 'C' },
-                    { key: 'g', label: '🦌 Dancer Gazelle Mask', color: 'badge-cyan', kbd: 'G' },
-                    { key: 'm', label: '🦍 Dancer Gorilla Mask', color: 'badge-green', kbd: 'M' },
-                    { key: 'n', label: '🦁 Dancer Lion Mask', color: 'badge-orange', kbd: 'N' },
+                    { key: 'space', label: 'Austrian Flag Cross', color: 'badge-red', kbd: 'ESPACE' },
+                    { key: 'a', label: 'Gold Imperial Sparkles', color: 'badge-gold', kbd: 'A' },
+                    { key: 'l', label: 'Lyres Sky Strobe', color: 'badge-cyan', kbd: 'L' },
+                    { key: 'c', label: 'Singer COSMO (Star Eye)', color: 'badge-blue', kbd: 'C' },
+                    { key: 'g', label: 'Dancer Gazelle Mask', color: 'badge-cyan', kbd: 'G' },
+                    { key: 'm', label: 'Dancer Gorilla Mask', color: 'badge-green', kbd: 'M' },
+                    { key: 'n', label: 'Dancer Lion Mask', color: 'badge-orange', kbd: 'N' },
                   ].map(({ key, label, color, kbd }) => (
                     <button
                       key={key}
@@ -944,7 +1062,7 @@ export default function App() {
 
               {/* Beat Detector Panel */}
               <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <h3 style={{ fontSize: '1.1rem', color: 'var(--text-primary)' }}>📊 Beat Detector & Audio Sync</h3>
+                <h3 style={{ fontSize: '1.1rem', color: 'var(--text-primary)' }}>Beat Detector & Audio Sync</h3>
                 <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                   Analyse le fichier audio pour extraire les transitoires (Kicks, impacts) et les synchroniser avec le serveur DMX.
                 </p>
@@ -970,7 +1088,7 @@ export default function App() {
                     }}
                   >
                     <Volume2 size={16} />
-                    {isAnalyzing ? "🔄 Analyse en cours..." : "🎙️ Analyser Rythmique MP3"}
+                    {isAnalyzing ? "Analyse en cours..." : "Analyser Rythmique MP3"}
                   </button>
                   {analysisStatus && (
                     <div style={{ fontSize: '0.8rem', color: 'var(--color-accent)', padding: '6px', borderRadius: '4px', backgroundColor: 'rgba(0,255,255,0.05)', border: '1px solid rgba(0,255,255,0.1)' }}>
@@ -979,15 +1097,15 @@ export default function App() {
                   )}
                   {detectedBeatsCount !== null && (
                     <div style={{ fontSize: '0.8rem', color: '#22c55e' }}>
-                      ✅ {detectedBeatsCount} impacts rythmiques enregistrés et synchronisés !
+                      {detectedBeatsCount} impacts rythmiques enregistres et synchronises !
                     </div>
                   )}
                 </div>
               </div>
 
               {/* Diagnostic Panel */}
-              <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <h3 style={{ fontSize: '1.1rem', color: 'var(--text-primary)' }}>🔧 Diagnostic Réseau</h3>
+              <div className="card" style={{ display: 'none' }}>
+                <h3 style={{ fontSize: '1.1rem', color: 'var(--text-primary)' }}>Diagnostic Reseau</h3>
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                   <button
                     onClick={() => {
@@ -997,7 +1115,7 @@ export default function App() {
                     disabled={isPinging}
                     style={{ backgroundColor: 'var(--color-accent)', fontSize: '0.8rem', padding: '8px 14px' }}
                   >
-                    {isPinging ? '🔄 Diagnostic...' : '📡 Tester Connectivité Wifi (Ping)'}
+                    {isPinging ? 'Diagnostic...' : 'Tester Connectivite Wifi (Ping)'}
                   </button>
                   <button
                     onClick={() => {
@@ -1016,7 +1134,7 @@ export default function App() {
                       cursor: 'pointer'
                     }}
                   >
-                    🎨 {telemetry.activeTestPattern?.type === 'all' ? '🛑 STOP TEST ALL' : 'Test ALL (R/G/B/Y)'}
+                    {telemetry.activeTestPattern?.type === 'all' ? 'STOP TEST ALL' : 'Test ALL (R/G/B/Y)'}
                   </button>
                   {(config?.controllers || []).map((ctrl: any, i: number) => {
                     const colors = ['#ef4444', '#22c55e', '#3b82f6', '#eab308'];
@@ -1045,7 +1163,7 @@ export default function App() {
                           cursor: 'pointer'
                         }}
                       >
-                        {isActive ? `📡 ${labels[i]} (Streaming)` : ctrl.ip}
+                        {isActive ? `${labels[i]} (Streaming)` : ctrl.ip}
                       </button>
                     );
                   })}
@@ -1054,7 +1172,7 @@ export default function App() {
                 {/* Ping results */}
                 {Object.keys(pingStatus).length > 0 && (
                   <div style={{ fontSize: '0.8rem', backgroundColor: 'var(--bg-base)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-muted)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.7rem', textTransform: 'uppercase', fontWeight: 'bold' }}>Résultats Ping Wifi</div>
+                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.7rem', textTransform: 'uppercase', fontWeight: 'bold' }}>Resultats Ping Wifi</div>
                     {Object.entries(pingStatus).map(([ip, data]: any) => (
                       <div key={ip} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span style={{ fontFamily: 'JetBrains Mono', color: 'var(--text-primary)' }}>{ip}</span>
@@ -1072,9 +1190,9 @@ export default function App() {
                 {/* Per-IP packet counts */}
                 {telemetry.packetCountPerIp && (
                   <div style={{ fontSize: '0.8rem', fontFamily: 'JetBrains Mono', backgroundColor: 'var(--bg-base)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-muted)' }}>
-                    <div style={{ marginBottom: '6px', color: 'var(--text-secondary)', fontSize: '0.7rem', textTransform: 'uppercase' }}>Packets envoyés par contrôleur (total)</div>
+                    <div style={{ marginBottom: '6px', color: 'var(--text-secondary)', fontSize: '0.7rem', textTransform: 'uppercase' }}>Packets envoyes par controleur (total)</div>
                     {Object.entries(telemetry.packetCountPerIp).length === 0 ? (
-                      <div style={{ color: 'var(--text-muted)' }}>Aucun paquet envoyé</div>
+                      <div style={{ color: 'var(--text-muted)' }}>Aucun paquet envoye</div>
                     ) : (
                       Object.entries(telemetry.packetCountPerIp).map(([ip, count]) => (
                         <div key={ip} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
@@ -1084,7 +1202,7 @@ export default function App() {
                       ))
                     )}
                     <div style={{ marginTop: '6px', borderTop: '1px solid var(--border-muted)', paddingTop: '6px', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                      Loop: {telemetry.loopRunning ? '✅ Running' : '❌ Stopped'}
+                      Loop: {telemetry.loopRunning ? 'Running' : 'Stopped'}
                       {' | '}
                       Override: {telemetry.activeOverride || 'none'}
                       {' | '}
@@ -1095,7 +1213,7 @@ export default function App() {
               </div>
 
               {/* Console log */}
-              <div className="card" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: '200px' }}>
+              <div className="card" style={{ display: 'none' }}>
                 <h3 style={{ fontSize: '1.1rem', color: 'var(--text-primary)', marginBottom: '10px' }}>DMX Packet Monitor & Logger</h3>
                 <div style={{ flex: 1, backgroundColor: 'hsl(224, 25%, 4%)', borderRadius: '8px', padding: '12px', fontFamily: 'JetBrains Mono', fontSize: '0.8rem', overflowY: 'auto', border: '1px solid var(--border-muted)', color: '#22c55e' }}>
                   {consoleLogs.map((log, i) => (
@@ -1114,7 +1232,7 @@ export default function App() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
                   <h3 style={{ fontSize: '1.1rem' }}>Show Authoring Timeline</h3>
-                  <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Track: COSMÓ - Tanzschein ({SHOW_DURATION_SECONDS}s)</span>
+                  <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Track: COSMO - Tanzschein ({SHOW_DURATION_SECONDS}s)</span>
                 </div>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                   <span className={`badge ${showDirty ? 'badge-red' : 'badge-green'}`}>{showDirty ? 'UNSAVED' : 'SAVED'}</span>
@@ -1423,7 +1541,7 @@ export default function App() {
                           <div style={{ height: '72px', borderRadius: '8px', border: '1px solid var(--border-accent)', background: `linear-gradient(135deg, ${params.color}, rgba(0,0,0,${Math.max(0, 1 - params.intensity)}))`, boxShadow: previewingBlockId === block.id ? `0 0 18px ${params.color}` : 'none' }} />
                           <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center' }}>
                             <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-                              {block.lane.toUpperCase()} · {block.type} · {(block.endTime - block.startTime).toFixed(1)}s
+                              {block.lane.toUpperCase()} / {block.type} / {(block.endTime - block.startTime).toFixed(1)}s
                             </div>
                             <button className={previewingBlockId === block.id ? '' : 'secondary'} onClick={() => previewSelectedBlock(block)}>
                               {previewingBlockId === block.id ? 'Stop Preview' : 'Preview Segment'}
@@ -1672,7 +1790,7 @@ export default function App() {
                   {(ehubMonitor?.lastPacket?.sample || []).map((entity) => (
                     <div key={entity.id} style={{ backgroundColor: 'var(--bg-base)', border: '1px solid var(--border-muted)', borderRadius: '6px', padding: '8px' }}>
                       <div style={{ color: 'var(--color-gold)' }}>#{entity.id}</div>
-                      <div>R {entity.r} · G {entity.g} · B {entity.b} · W {entity.w}</div>
+                      <div>R {entity.r} / G {entity.g} / B {entity.b} / W {entity.w}</div>
                     </div>
                   ))}
                 </div>
@@ -1688,7 +1806,7 @@ export default function App() {
                 <div>
                   <h3 style={{ fontSize: '1.1rem' }}>Config Health</h3>
                   <p style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', marginTop: '4px' }}>
-                    Validation du setup physique: IP, univers, canaux DMX, capacitÃ© et mapping.
+                    Validation du setup physique: IP, univers, canaux DMX, capacite et mapping.
                   </p>
                 </div>
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
@@ -1722,7 +1840,7 @@ export default function App() {
                 <div>
                   <h3 style={{ fontSize: '1.1rem' }}>Adaptable LED Wall Layout</h3>
                   <p style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', marginTop: '4px' }}>
-                    Change la taille visible, le nombre de bandes ou les appareils, puis régénère le mapping physique.
+                    Change la taille visible, le nombre de bandes ou les appareils, puis regenere le mapping physique.
                   </p>
                 </div>
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
@@ -1779,7 +1897,7 @@ export default function App() {
                 <button className="secondary" onClick={deriveLedWallWiringFromSize}>Derive wiring from size</button>
                 <button onClick={regeneratePhysicalMapping}>Regenerate physical mapping</button>
                 <span style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>
-                  Recalcule contrôleurs, univers et entityMap depuis la géométrie actuelle.
+                  Recalcule controleurs, univers et entityMap depuis la geometrie actuelle.
                 </span>
               </div>
             </div>
