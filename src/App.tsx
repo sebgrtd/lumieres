@@ -57,8 +57,32 @@ const getEffectParams = (block: TimelineBlock): EffectParams => ({
   ...(block.params || {}),
 });
 
+interface DmxMonitorState {
+  generatedAt: number;
+  loopRunning: boolean;
+  isPlaying: boolean;
+  activeOverride: string | null;
+  bufferCount: number;
+  dirtyUniverses: string[];
+  availableUniverses: string[];
+  selectedUniverse: null | {
+    key: string;
+    nonZeroCount: number;
+    firstChannels: number[];
+    nonZeroChannels: Array<{ channel: number; value: number }>;
+  };
+  lastArtNetPackets: Array<{ ip: string; universe: number; artnetUniverse: number; bytes: number; sentAt: number }>;
+  inspectedEntity: null | {
+    id: number;
+    target: null | { ip: string; universe: number; channel: number; type: string; fixtureId?: string };
+    value: null | { channel: number; bytes: number[] };
+  };
+  controllers: Array<{ ip: string; startUniverse: number; universeCount: number; firstUniverse?: number; lastUniverse?: number }>;
+  entityCount: number;
+}
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'timeline' | 'images' | 'config'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'timeline' | 'images' | 'debug' | 'config'>('dashboard');
   const [wsConnected, setWsConnected] = useState(false);
   const [telemetry, setTelemetry] = useState<any>({ fps: 0, packetsPerSec: 0, kbps: 0, ehubPacketsPerSec: 0 });
   const [currentTime, setCurrentTime] = useState(0);
@@ -101,6 +125,9 @@ export default function App() {
 
   const [pingStatus, setPingStatus] = useState<Record<string, { status: string; latency: string }>>({});
   const [isPinging, setIsPinging] = useState(false);
+  const [dmxMonitor, setDmxMonitor] = useState<DmxMonitorState | null>(null);
+  const [selectedUniverseKey, setSelectedUniverseKey] = useState('');
+  const [inspectEntityId, setInspectEntityId] = useState('100');
 
   const addLog = (msg: string) => {
     setConsoleLogs((prev) => [ `[${new Date().toLocaleTimeString()}] ${msg}`, ...prev.slice(0, 15) ]);
@@ -243,6 +270,36 @@ export default function App() {
       wsRef.current.send(JSON.stringify({ type: 'preview-block', block }));
     }
   }, [blocks, previewingBlockId]);
+
+  useEffect(() => {
+    if (activeTab !== 'debug') return;
+    let cancelled = false;
+
+    const loadMonitor = async () => {
+      try {
+        const params = new URLSearchParams();
+        if (selectedUniverseKey) params.set('universeKey', selectedUniverseKey);
+        if (inspectEntityId.trim()) params.set('entityId', inspectEntityId.trim());
+        const response = await fetch(`/api/dmx-monitor?${params.toString()}`);
+        const data = await response.json();
+        if (!cancelled) {
+          setDmxMonitor(data);
+          if (!selectedUniverseKey && data.selectedUniverse?.key) {
+            setSelectedUniverseKey(data.selectedUniverse.key);
+          }
+        }
+      } catch (e) {
+        addLog(`DMX monitor error: ${(e as Error).message}`);
+      }
+    };
+
+    loadMonitor();
+    const interval = window.setInterval(loadMonitor, 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [activeTab, selectedUniverseKey, inspectEntityId]);
 
   // Sync Synthesizer with backend playback state
   useEffect(() => {
@@ -634,6 +691,13 @@ export default function App() {
           onClick={() => setActiveTab('images')}
         >
           <ImagePlus size={16} style={{ marginRight: '6px', display: 'inline' }} /> Image Studio
+        </button>
+        <button
+          className="secondary"
+          style={{ borderRadius: '0', borderBottom: activeTab === 'debug' ? '2px solid var(--color-red)' : 'none', color: activeTab === 'debug' ? 'var(--text-primary)' : 'var(--text-secondary)' }}
+          onClick={() => setActiveTab('debug')}
+        >
+          <Radio size={16} style={{ marginRight: '6px', display: 'inline' }} /> Debug Monitor
         </button>
         <button
           className="secondary"
@@ -1295,6 +1359,141 @@ export default function App() {
         )}
 
         {activeTab === 'images' && <ImageStudio config={config} />}
+
+        {activeTab === 'debug' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', flex: 1 }}>
+            <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <div>
+                  <h3 style={{ fontSize: '1.1rem' }}>DMX / ArtNet Debug Monitor</h3>
+                  <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Live snapshot before ArtNet encapsulation and network send.</span>
+                </div>
+                <button
+                  className="secondary"
+                  onClick={() => {
+                    setSelectedUniverseKey('');
+                    setDmxMonitor(null);
+                  }}
+                >
+                  Refresh Snapshot
+                </button>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: '10px' }}>
+                {[
+                  ['Loop', dmxMonitor?.loopRunning ? 'RUNNING' : 'STOPPED', dmxMonitor?.loopRunning ? '#22c55e' : 'var(--text-muted)'],
+                  ['Buffers', String(dmxMonitor?.bufferCount ?? 0), 'var(--color-cyan)'],
+                  ['Entities', String(dmxMonitor?.entityCount ?? 0), 'var(--color-gold)'],
+                  ['Dirty/frame', String(dmxMonitor?.dirtyUniverses?.length ?? 0), 'var(--color-red)'],
+                  ['Packets', String(dmxMonitor?.lastArtNetPackets?.length ?? 0), '#22c55e'],
+                ].map(([label, value, color]) => (
+                  <div key={label} style={{ backgroundColor: 'var(--bg-base)', border: '1px solid var(--border-muted)', borderRadius: '6px', padding: '10px' }}>
+                    <span style={{ display: 'block', fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>{label}</span>
+                    <span style={{ fontFamily: 'JetBrains Mono', color }}>{value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 0.7fr', gap: '20px' }}>
+              <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center' }}>
+                  <h3 style={{ fontSize: '1rem' }}>Universe Buffer</h3>
+                  <select
+                    value={selectedUniverseKey}
+                    onChange={(event) => setSelectedUniverseKey(event.target.value)}
+                    style={{ minWidth: '220px' }}
+                  >
+                    {(dmxMonitor?.availableUniverses || []).map((key) => (
+                      <option key={key} value={key}>{key}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', gap: '4px' }}>
+                  {(dmxMonitor?.selectedUniverse?.firstChannels || Array.from({ length: 96 }, () => 0)).map((value, channel) => (
+                    <div
+                      key={channel}
+                      title={`CH ${channel}: ${value}`}
+                      style={{
+                        height: '34px',
+                        borderRadius: '4px',
+                        border: '1px solid var(--border-muted)',
+                        backgroundColor: value > 0 ? `rgba(34, 197, 94, ${Math.max(0.12, value / 255)})` : 'var(--bg-base)',
+                        color: value > 160 ? '#020617' : 'var(--text-secondary)',
+                        fontFamily: 'JetBrains Mono',
+                        fontSize: '0.65rem',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      {value}
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                  Non-zero channels: {dmxMonitor?.selectedUniverse?.nonZeroCount ?? 0}
+                </div>
+              </div>
+
+              <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <h3 style={{ fontSize: '1rem' }}>Entity Inspector</h3>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  Entity ID
+                  <input
+                    type="number"
+                    value={inspectEntityId}
+                    onChange={(event) => setInspectEntityId(event.target.value)}
+                  />
+                </label>
+                {dmxMonitor?.inspectedEntity?.target ? (
+                  <div style={{ backgroundColor: 'var(--bg-base)', border: '1px solid var(--border-muted)', borderRadius: '6px', padding: '10px', fontFamily: 'JetBrains Mono', fontSize: '0.78rem', lineHeight: 1.8 }}>
+                    <div>IP: {dmxMonitor.inspectedEntity.target.ip}</div>
+                    <div>Universe: {dmxMonitor.inspectedEntity.target.universe}</div>
+                    <div>Channel: {dmxMonitor.inspectedEntity.target.channel}</div>
+                    <div>Type: {dmxMonitor.inspectedEntity.target.type}</div>
+                    <div>Bytes: {(dmxMonitor.inspectedEntity.value?.bytes || []).join(', ')}</div>
+                  </div>
+                ) : (
+                  <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem' }}>No mapped entity for this ID.</div>
+                )}
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+              <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <h3 style={{ fontSize: '1rem' }}>Recent ArtNet Packets</h3>
+                <div style={{ maxHeight: '260px', overflowY: 'auto', fontFamily: 'JetBrains Mono', fontSize: '0.75rem' }}>
+                  {(dmxMonitor?.lastArtNetPackets || []).map((packet, idx) => (
+                    <div key={`${packet.sentAt}-${idx}`} style={{ display: 'grid', gridTemplateColumns: '1fr 0.7fr 0.7fr 0.7fr', gap: '8px', padding: '6px 0', borderBottom: '1px solid var(--border-muted)' }}>
+                      <span>{packet.ip}</span>
+                      <span>U {packet.universe}</span>
+                      <span>Art {packet.artnetUniverse}</span>
+                      <span>{Date.now() - packet.sentAt}ms</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <h3 style={{ fontSize: '1rem' }}>Dirty Universes</h3>
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                  {(dmxMonitor?.dirtyUniverses || []).length === 0 ? (
+                    <span style={{ color: 'var(--text-muted)', fontSize: '0.82rem' }}>No dirty universes in last frame.</span>
+                  ) : (
+                    dmxMonitor!.dirtyUniverses.map((key) => (
+                      <button key={key} className="secondary" onClick={() => setSelectedUniverseKey(key)} style={{ fontFamily: 'JetBrains Mono', fontSize: '0.72rem', padding: '5px 8px' }}>
+                        {key}
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {activeTab === 'config' && config && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', flex: 1 }}>
