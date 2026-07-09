@@ -1,5 +1,8 @@
 export async function analyzeAudioBeats(onProgress: (msg: string) => void): Promise<number[]> {
   try {
+    const AUDIO_START_OFFSET = 30.0;
+    const SHOW_DURATION = 45.0;
+
     onProgress("Téléchargement du fichier tanzschein.mp3...");
     const response = await fetch('/tanzschein.mp3');
     if (!response.ok) throw new Error("Fichier MP3 introuvable dans le dossier public.");
@@ -24,7 +27,8 @@ export async function analyzeAudioBeats(onProgress: (msg: string) => void): Prom
     
     for (let i = 0; i < channelData.length - windowSize; i += stepSize) {
       const time = i / sampleRate;
-      if (time > 45.0) break; // Limiter aux 45 premières secondes
+      if (time < AUDIO_START_OFFSET) continue;
+      if (time > AUDIO_START_OFFSET + SHOW_DURATION) break; // Limiter aux 45 secondes jouées
       
       // Calculer l'amplitude maximale absolue dans la fenêtre
       let maxVal = 0;
@@ -35,7 +39,7 @@ export async function analyzeAudioBeats(onProgress: (msg: string) => void): Prom
       
       // Si la valeur dépasse le seuil et qu'on a un écart de 220ms minimum (rythme à 130 BPM)
       if (maxVal > threshold && (time - lastPeakTime) > 0.22) {
-        peaks.push(parseFloat(time.toFixed(2)));
+        peaks.push(parseFloat((time - AUDIO_START_OFFSET).toFixed(2)));
         lastPeakTime = time;
       }
     }

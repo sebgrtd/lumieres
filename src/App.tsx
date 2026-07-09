@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { Play, Pause, Square, Radio, Cpu, Settings, Activity, Trash2, Plus, Volume2 } from 'lucide-react';
+import { Play, Pause, Square, Radio, Cpu, Settings, Activity, Trash2, Plus, Volume2, ImagePlus } from 'lucide-react';
 import { Visualizer } from './components/Visualizer.tsx';
 import { synthInstance } from './components/AudioEngine.ts';
 import { analyzeAudioBeats } from './components/AudioAnalyzer.ts';
 import { SHOW_DURATION_SECONDS, SHOW_TIMELINE, type EffectParams, type TimelineBlock } from './timeline/showTimeline.ts';
+import { ImageStudio } from './components/ImageStudio.tsx';
 
 const LANE_LABELS: Record<TimelineBlock['lane'], string> = {
   wall: 'LED Wall Lane',
@@ -57,7 +58,7 @@ const getEffectParams = (block: TimelineBlock): EffectParams => ({
 });
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'timeline' | 'config'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'timeline' | 'images' | 'config'>('dashboard');
   const [wsConnected, setWsConnected] = useState(false);
   const [telemetry, setTelemetry] = useState<any>({ fps: 0, packetsPerSec: 0, kbps: 0, ehubPacketsPerSec: 0 });
   const [currentTime, setCurrentTime] = useState(0);
@@ -293,6 +294,33 @@ export default function App() {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'blackout' }));
     }
+  };
+
+  const handleFinalDemo = async () => {
+    blurAll();
+    setActiveTab('dashboard');
+
+    if (showDirty) {
+      await saveShow();
+    }
+
+    if (detectedBeatsCount === null && !isAnalyzing) {
+      await runBeatAnalysis();
+    }
+
+    synthInstance.stop();
+    currentTimeRef.current = 0;
+    setCurrentTime(0);
+    setFrameState({});
+    setInteractiveOverride(null);
+    setIsPlaying(true);
+    synthInstance.play(0, () => {});
+
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'demo-start' }));
+    }
+
+    addLog('FINAL DEMO MODE: timeline, audio and ArtNet restarted from 0.00s.');
   };
 
   const sortTimelineBlocks = (nextBlocks: TimelineBlock[]) => (
@@ -543,6 +571,12 @@ export default function App() {
     }
   };
 
+  const demoProgress = Math.min(100, Math.max(0, (currentTime / SHOW_DURATION_SECONDS) * 100));
+  const configuredControllers = config?.controllers?.length || 0;
+  const configuredEntities = Object.keys(config?.entityMap || {}).length;
+  const demoLanes = new Set(blocks.map((block) => block.lane));
+  const demoReady = wsConnected && configuredControllers > 0 && configuredEntities > 0 && blocks.length > 0;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
       {/* 1. Header */}
@@ -596,6 +630,13 @@ export default function App() {
         </button>
         <button
           className="secondary"
+          style={{ borderRadius: '0', borderBottom: activeTab === 'images' ? '2px solid var(--color-red)' : 'none', color: activeTab === 'images' ? 'var(--text-primary)' : 'var(--text-secondary)' }}
+          onClick={() => setActiveTab('images')}
+        >
+          <ImagePlus size={16} style={{ marginRight: '6px', display: 'inline' }} /> Image Studio
+        </button>
+        <button
+          className="secondary"
           style={{ borderRadius: '0', borderBottom: activeTab === 'config' ? '2px solid var(--color-red)' : 'none', color: activeTab === 'config' ? 'var(--text-primary)' : 'var(--text-secondary)' }}
           onClick={() => setActiveTab('config')}
         >
@@ -611,6 +652,63 @@ export default function App() {
             <Visualizer frameState={frameState} config={config} />
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              {/* Final demo proof panel */}
+              <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '14px', border: '1px solid var(--color-gold)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+                  <div>
+                    <h3 style={{ fontSize: '1.1rem', color: 'var(--text-primary)' }}>Final Demo Mode</h3>
+                    <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>COSMÓ - Tanzschein / {SHOW_DURATION_SECONDS}s synchronized show</span>
+                  </div>
+                  <button
+                    onClick={handleFinalDemo}
+                    disabled={!demoReady || isAnalyzing}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      backgroundColor: demoReady ? 'var(--color-gold)' : 'var(--bg-surface-elevated)',
+                      color: demoReady ? '#080b12' : 'var(--text-muted)',
+                      fontWeight: 'bold',
+                      minWidth: '180px',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <Play size={18} />
+                    {isAnalyzing ? 'SYNCING AUDIO' : 'START FINAL DEMO'}
+                  </button>
+                </div>
+
+                <div style={{ height: '10px', backgroundColor: 'var(--bg-base)', borderRadius: '999px', overflow: 'hidden', border: '1px solid var(--border-muted)' }}>
+                  <div style={{ width: `${demoProgress}%`, height: '100%', backgroundColor: 'var(--color-gold)', transition: 'width 120ms linear' }} />
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '10px' }}>
+                  <div style={{ backgroundColor: 'var(--bg-base)', border: '1px solid var(--border-muted)', borderRadius: '6px', padding: '10px' }}>
+                    <span style={{ display: 'block', fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Playback</span>
+                    <span style={{ fontFamily: 'JetBrains Mono', color: isPlaying ? '#22c55e' : 'var(--text-primary)' }}>{currentTime.toFixed(2)}s</span>
+                  </div>
+                  <div style={{ backgroundColor: 'var(--bg-base)', border: '1px solid var(--border-muted)', borderRadius: '6px', padding: '10px' }}>
+                    <span style={{ display: 'block', fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Devices</span>
+                    <span style={{ fontFamily: 'JetBrains Mono', color: 'var(--color-cyan)' }}>{configuredControllers} ctrl / {configuredEntities} ent</span>
+                  </div>
+                  <div style={{ backgroundColor: 'var(--bg-base)', border: '1px solid var(--border-muted)', borderRadius: '6px', padding: '10px' }}>
+                    <span style={{ display: 'block', fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Show Lanes</span>
+                    <span style={{ fontFamily: 'JetBrains Mono', color: demoLanes.size >= 3 ? '#22c55e' : 'var(--color-gold)' }}>{demoLanes.size}/3 active</span>
+                  </div>
+                  <div style={{ backgroundColor: 'var(--bg-base)', border: '1px solid var(--border-muted)', borderRadius: '6px', padding: '10px' }}>
+                    <span style={{ display: 'block', fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Realtime</span>
+                    <span style={{ fontFamily: 'JetBrains Mono', color: telemetry.loopRunning ? '#22c55e' : 'var(--text-primary)' }}>{telemetry.fps} FPS / {telemetry.packetsPerSec} pkt/s</span>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <span className={`badge ${wsConnected ? 'badge-green' : 'badge-red'}`}>WebSocket</span>
+                  <span className={`badge ${detectedBeatsCount ? 'badge-green' : 'badge-gold'}`}>{detectedBeatsCount ? `${detectedBeatsCount} beats synced` : 'Audio analysis pending'}</span>
+                  <span className={`badge ${showDirty ? 'badge-red' : 'badge-green'}`}>{showDirty ? 'Save show pending' : 'Show saved'}</span>
+                  <span className={`badge ${configuredControllers > 0 ? 'badge-green' : 'badge-red'}`}>Physical config</span>
+                </div>
+              </div>
+
               {/* Playback controls */}
               <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 <h3 style={{ fontSize: '1.1rem', color: 'var(--text-primary)' }}>Playback Controller</h3>
@@ -985,12 +1083,12 @@ export default function App() {
                     style={{ width: '100%', cursor: 'not-allowed' }}
                   />
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px', fontFamily: 'JetBrains Mono' }}>
-                    <span>0s (Intro Ticks)</span>
-                    <span>7.4s (Blue Star)</span>
-                    <span>14.8s (Quadrants)</span>
-                    <span>22.2s (Buildup)</span>
-                    <span>29.5s (Tanzschein Drop)</span>
-                    <span>{SHOW_DURATION_SECONDS}s (End)</span>
+                    <span>0s (Buildup End)</span>
+                    <span>3.0s (Drop 1)</span>
+                    <span>20.0s (Verse 2)</span>
+                    <span>32.0s (Buildup 2)</span>
+                    <span>40.0s (Drop 2)</span>
+                    <span>45s (End)</span>
                   </div>
                 </div>
 
@@ -1195,6 +1293,8 @@ export default function App() {
             )}
           </div>
         )}
+
+        {activeTab === 'images' && <ImageStudio config={config} />}
 
         {activeTab === 'config' && config && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', flex: 1 }}>

@@ -26,6 +26,9 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
+const LED_WALL_WIDTH = 128;
+const LED_WALL_HEIGHT = 128;
+
 const httpServer = createServer(app);
 const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
 
@@ -191,6 +194,34 @@ function saveTimelineToDisk(blocks: TimelineBlock[]) {
   fs.writeFileSync(SHOW_FILE, JSON.stringify({ duration: SHOW_DURATION_SECONDS, blocks }, null, 2), 'utf8');
 }
 
+interface LyricCue {
+  startTime: number;
+  endTime: number;
+  lines: readonly [string] | readonly [string, string];
+  kind?: 'hey';
+}
+
+// The browser starts the local performance MP3 at 30s. The public synced lyric
+// timestamps line up after accounting for the video's pre-roll, and the two
+// "HEY HEY" cues below preserve the moments that are already correct live.
+const LYRIC_CUES: readonly LyricCue[] = [
+  { startTime: 9.2, endTime: 10.85, lines: ['HEY', 'HEY'], kind: 'hey' },
+  { startTime: 16.6, endTime: 18.25, lines: ['HEY', 'HEY'], kind: 'hey' },
+  { startTime: 23.35, endTime: 25.0, lines: ['TANZ', 'SCHEIN'] },
+  { startTime: 25.0, endTime: 27.35, lines: ['STRENG', 'SEIN'] },
+  { startTime: 27.35, endTime: 29.55, lines: ['TANZ', 'SCHEIN'] },
+  { startTime: 29.55, endTime: 30.95, lines: ['NICHT', 'REIN'] },
+  { startTime: 30.95, endTime: 33.15, lines: ['TANZ', 'SCHEIN'] },
+  { startTime: 33.15, endTime: 34.75, lines: ['WITZ', 'SEIN'] },
+  { startTime: 34.75, endTime: 37.05, lines: ['TANZ', 'SCHEIN'] },
+  { startTime: 37.05, endTime: 39.1, lines: ['NICHT', 'REIN'] },
+];
+
+const REFRAIN_LYRICS_START = 23.35;
+const REFRAIN_LYRICS_END = 39.1;
+const FIRST_HEY_START = 9.2;
+const SHOW_END = 45.0;
+
 function hexToRgb(hex: string): [number, number, number] {
   const normalized = /^#[0-9a-f]{6}$/i.test(hex) ? hex : DEFAULT_EFFECT_PARAMS.color;
   return [
@@ -266,10 +297,21 @@ let currentTelemetry: TelemetryState = {
 };
 
 let activeTestPattern: { type: 'controller' | 'all'; controllerIdx?: number; color?: number[] } | null = null;
+let activeImageFrame: { width: number; height: number; rgba: Uint8Array } | null = null;
+
+function startShowFromBeginning() {
+  activeTestPattern = null;
+  activeOverride = null;
+  playbackTime = 0;
+  playbackStartRealTime = Date.now();
+  isPlaying = true;
+  dirtyUniverses.clear();
+  updateRouterState();
+}
 
 // 40Hz Main Loop Manager
 function updateRouterState() {
-  const needsLoop = isPlaying || activeOverride !== null || activeTestPattern !== null || activePreviewBlock !== null;
+  const needsLoop = isPlaying || activeOverride !== null || activeTestPattern !== null || activeImageFrame !== null || activePreviewBlock !== null;
 
   if (needsLoop) {
     if (!routeInterval) {
@@ -299,6 +341,8 @@ function updateRouterState() {
           evaluateWallBlock(activePreviewBlock.lane === 'wall' ? activePreviewBlock.type : 'black', playbackTime, isAudioImpact, activePreviewBlock.params);
           evaluateLyresBlock(activePreviewBlock.lane === 'lyres' ? activePreviewBlock.type : 'black', playbackTime, isAudioImpact, activePreviewBlock.params);
           evaluateStaticBlock(activePreviewBlock.lane === 'static' ? activePreviewBlock.type : 'static_off', playbackTime, isAudioImpact, activePreviewBlock.params);
+        } else if (activeImageFrame) {
+          evaluateImageFrame(activeImageFrame);
         } else if (activeTestPattern) {
           if (activeTestPattern.type === 'controller') {
             const ctrl = activeConfig.controllers[activeTestPattern.controllerIdx!];
@@ -398,6 +442,14 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
   const beatProgress = (adjustedTime % BEAT_DURATION) / BEAT_DURATION;
   const measureIdx = Math.floor(beatIdx / 4);
   const beatInMeasure = beatIdx % 4;
+  const renderType = getWallRenderType(type, time);
+
+  let fadeScale = 1.0;
+  if (time < 1.5) {
+    fadeScale = time / 1.5;
+  } else if (time > 43.5) {
+    fadeScale = Math.max(0, (45.0 - time) / 1.5);
+  }
 
   forEachVisibleWallPixel((physicalX, physicalY, x, y) => {
       const id = getWallEntityId(physicalX, physicalY);
@@ -406,7 +458,10 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
 
       let r = 0, g = 0, b = 0;
 
-      if (type === 'guitar_intro') {
+      if (renderType === 'cosmo_singer_intro') {
+        const color = drawCosmoSingerIntro(x, y, time, beatProgress, beatIdx);
+        r = color.r; g = color.g; b = color.b;
+      } else if (renderType === 'guitar_intro') {
         // Keep screen completely black for the first 0.6 seconds to cover initial silence
         if (time < 0.6) {
           r = g = b = 0;
@@ -427,7 +482,7 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
             b = Math.round(8 * glow);
           }
         }
-      } else if (type === 'intro_ticks') {
+      } else if (renderType === 'intro_ticks') {
         // 1. Concentric shrinking neon square tunnel (ticking clock feel)
         const dx = Math.abs(x - 64);
         const dy = Math.abs(y - 64);
@@ -455,7 +510,7 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
           g = Math.round(g * fade);
           b = Math.round(b * fade);
         }
-      } else if (type === 'blue_star_burst') {
+      } else if (renderType === 'blue_star_burst') {
         // 2. The "Tanzschein" (Dance Licence) Card & Stamp + Gazelle Mask in the center
         const dx = Math.abs(x - 64);
         const dy = Math.abs(y - 64);
@@ -486,14 +541,19 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
           }
         }
 
-        // Transition White Flash Impact at the drop entry (from 5.9s to 6.15s)
-        if (time >= 5.9 && time < 6.15) {
-          const flash = 1.0 - (time - 5.9) / 0.25;
-          r = Math.round(r * (1.0 - flash) + 255 * flash);
-          g = Math.round(g * (1.0 - flash) + 255 * flash);
-          b = Math.round(b * (1.0 - flash) + 255 * flash);
+        // Smooth fade-in (20.0s - 20.8s) and fade-out (25.2s - 26.0s) at the ends of the Gazelle sequence
+        if (time >= 20.0 && time <= 20.8) {
+          const fade = (time - 20.0) / 0.8;
+          r = Math.round(r * fade);
+          g = Math.round(g * fade);
+          b = Math.round(b * fade);
+        } else if (time >= 25.2 && time <= 26.0) {
+          const fade = (26.0 - time) / 0.8;
+          r = Math.round(r * fade);
+          g = Math.round(g * fade);
+          b = Math.round(b * fade);
         }
-      } else if (type === 'quadrant_flashes') {
+      } else if (renderType === 'quadrant_flashes') {
         // 3. Glowing neon gorilla mask in the center + flashing quadrants
         const maskColor = drawCharacterMask('gorilla', x, y, time, beatProgress);
         
@@ -516,7 +576,27 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
             r = 0; g = 20; b = 30; // dim background
           }
         }
-      } else if (type === 'laser_sweeps') {
+
+      } else if (renderType === 'quadrant_flashes_no_mask') {
+        // Same quadrant flash look as quadrant_flashes, but without the center mask.
+        let pixelQuad = 0;
+        if (x < 64 && y >= 64) pixelQuad = 0;
+        else if (x >= 64 && y >= 64) pixelQuad = 1;
+        else if (x < 64 && y < 64) pixelQuad = 2;
+        else pixelQuad = 3;
+
+        if (pixelQuad === beatInMeasure) {
+          const decay = 1 - beatProgress;
+          const accent = getLyricAccentAtTime(time);
+          r = Math.floor(accent[0] * decay);
+          g = Math.floor(accent[1] * decay);
+          b = Math.floor(accent[2] * decay);
+        } else {
+          r = 0;
+          g = 20;
+          b = 30;
+        }
+      } else if (renderType === 'laser_sweeps') {
         // 4. Rotating crossing laser tunnel + Lion Mask in the center (Pre-chorus)
         const maskColor = drawCharacterMask('lion', x, y, time, beatProgress);
         
@@ -525,7 +605,12 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
         } else {
           const dx = x - 64;
           const dy = y - 64;
-          const progress = Math.max(0, Math.min(1.0, (time - 20.7) / 7.3));
+          let progress = 0;
+          if (time < 3.0) {
+            progress = Math.max(0, Math.min(1.0, (time + 4.3) / 7.3));
+          } else {
+            progress = Math.max(0, Math.min(1.0, (time - 32.0) / 8.0));
+          }
           const angle = time * (3.0 + progress * 5.0); // accelerates rotation
           
           // Draw two crossing laser lines
@@ -554,54 +639,9 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
           if (isBorder && strobeOn) {
             r = 255; g = 255; b = 255;
           }
+
         }
-
-        // Overlay huge stroboscopic "HEY HEY" on two lines with slide-in transitions (20.7s to 23.0s)
-        if (time >= 20.7 && time < 23.0) {
-          const inTextRibbon = y >= 42 && y < 87;
-          if (inTextRibbon) {
-            const scale = 3;
-            
-            // 1. Top "HEY" (slides from left starting at 20.7s)
-            const t1 = time - 20.7;
-            const targetX1 = 32;
-            const startY1 = 86;
-            let startX1 = targetX1;
-            if (t1 < 0.3) {
-              startX1 = Math.round(-80 + 112 * (t1 / 0.3));
-            }
-            const inText1 = isPixelInText("HEY", x, y, startX1, startY1, scale, 7);
-
-            // 2. Bottom "HEY" (slides from right starting at 21.85s)
-            let inText2 = false;
-            if (time >= 21.85) {
-              const t2 = time - 21.85;
-              const targetX2 = 32;
-              const startY2 = 62;
-              let startX2 = targetX2;
-              if (t2 < 0.3) {
-                startX2 = Math.round(128 - 96 * (t2 / 0.3));
-              }
-              inText2 = isPixelInText("HEY", x, y, startX2, startY2, scale, 7);
-            }
-
-            const inText = inText1 || inText2;
-            const invertActive = beatIdx % 2 === 0;
-
-            if (invertActive) {
-              if (inText) {
-                r = 0; g = 0; b = 0; // Black text
-              } else {
-                r = 235; g = 180; b = 45; // Gold background strobe
-              }
-            } else {
-              if (inText) {
-                r = 235; g = 180; b = 45; // Gold text
-              }
-            }
-          }
-        }
-      } else if (type === 'reactive_drop') {
+      } else if (renderType === 'reactive_drop') {
         // 5. Huge TANZ / SCHEIN stroboscopic text + equalizers
         // A. Bouncing Equalizer height
         const colIdx = Math.floor(x / 8);
@@ -610,8 +650,43 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
         const eqHeight = 10 + baseHeight * (0.4 + 0.6 * bounce);
 
         // B. Center text area (y from 24 to 104)
-        const inRibbon = y >= 24 && y < 104;        if (inRibbon) {
-          const inText = isPixelInTextManual(x, y);
+        const inRibbon = y >= 24 && y < 104;
+        if (inRibbon) {
+          let inText = false;
+          const scale = 3;
+
+          const heyCue = getHeyCueAtTime(time);
+          let heyOpacity = 1;
+
+          if (heyCue) {
+            const t1 = time - heyCue.startTime;
+            const t2 = time - (heyCue.startTime + 0.7);
+            heyOpacity = Math.max(0, Math.min(1, (heyCue.endTime - time) / 0.5));
+            // Sliding HEY HEY animation
+            // 1. Top "HEY" (slides from left)
+            const targetX1 = 32;
+            const startY1 = 88; // align with top drop line
+            let startX1 = targetX1;
+            if (t1 < 0.25) {
+              startX1 = Math.round(-80 + 112 * (t1 / 0.25));
+            }
+            const inText1 = isPixelInText("HEY", x, y, startX1, startY1, scale, 7);
+
+            // 2. Bottom "HEY" (slides from right)
+            let inText2 = false;
+            if (t2 >= 0) {
+              const targetX2 = 32;
+              const startY2 = 62; // align with bottom drop line
+              let startX2 = targetX2;
+              if (t2 < 0.25) {
+                startX2 = Math.round(128 - 96 * (t2 / 0.25));
+              }
+              inText2 = isPixelInText("HEY!", x, y, startX2, startY2, scale, 7);
+            }
+            inText = inText1 || inText2;
+          } else {
+            inText = false;
+          }
 
           const invertActive = beatIdx % 2 === 0;
 
@@ -632,6 +707,12 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
               r = 0; g = 0; b = 0; // Black background
             }
           }
+
+          if (heyCue && heyOpacity < 1) {
+            r = Math.round(r * heyOpacity);
+            g = Math.round(g * heyOpacity);
+            b = Math.round(b * heyOpacity);
+          }
         } else {
           // C. Outside the ribbon: draw mirrored equalizer bars at top and bottom
           const isInsideEq = (y < eqHeight) || (y > 127 - eqHeight);
@@ -651,12 +732,23 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
             }
           }
         }
+
+
+
+        // Overlay the singer between first and second HEY, and after second HEY until the end of the drop (26.0s)
+        const showSinger = (time >= 10.85 && time < 16.6) || (time >= 18.25 && time < 26.0);
+        if (showSinger) {
+          const singer = getSingerPixelColor(x, y, time, beatProgress, beatIdx, 22, 24);
+          if (singer) {
+            r = singer.r; g = singer.g; b = singer.b;
+          }
+        }
       }
 
 
 
       // EXTRA: Draw expanding shockwave circles of white sparkles on analyzed audio beat hits
-      if (isAudioImpact && type !== 'black') {
+      if (isAudioImpact && renderType !== 'black' && !getLyricCueAtTime(time)) {
         const dx = x - 64;
         const dy = y - 64;
         const dist = Math.sqrt(dx * dx + dy * dy);
@@ -668,11 +760,18 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
 
       [r, g, b] = applyEffectParams(r, g, b, time, params);
 
+      const lyricOverlay = getFinalLyricOverlayPixel(time, x, y, beatIdx);
+      if (lyricOverlay) {
+        r = lyricOverlay.r;
+        g = lyricOverlay.g;
+        b = lyricOverlay.b;
+      }
+
       // Write directly to universe buffers
       const buf = getUniverseBuffer(target.ip, target.universe);
-      buf[target.channel] = r;
-      buf[target.channel + 1] = g;
-      buf[target.channel + 2] = b;
+      buf[target.channel] = Math.round(r * fadeScale);
+      buf[target.channel + 1] = Math.round(g * fadeScale);
+      buf[target.channel + 2] = Math.round(b * fadeScale);
       dirtyUniverses.add(`${target.ip}:${target.universe}`);
   });
 }
@@ -720,7 +819,12 @@ function evaluateLyresBlock(type: string, time: number, isAudioImpact: boolean =
     } else if (type === 'lyre_buildup_strobe') {
       // Raise beams to ceiling
       pan = 127;
-      const progress = Math.max(0, Math.min(1.0, (time - 20.7) / 7.3));
+      let progress = 0;
+      if (time < 3.0) {
+        progress = Math.max(0, Math.min(1.0, (time + 4.3) / 7.3));
+      } else {
+        progress = Math.max(0, Math.min(1.0, (time - 32.0) / 8.0));
+      }
       tilt = Math.round(120 + progress * 100);
       dimmer = 255;
       // Accelerate strobe
@@ -766,6 +870,15 @@ function evaluateLyresBlock(type: string, time: number, isAudioImpact: boolean =
       else if (dominant === tb) colorCh = 105;
     }
 
+    // Apply global visual fade scale (1.5s fade-in/out)
+    let fadeScale = 1.0;
+    if (time < 1.5) {
+      fadeScale = time / 1.5;
+    } else if (time > 43.5) {
+      fadeScale = Math.max(0, (45.0 - time) / 1.5);
+    }
+    dimmer = Math.round(dimmer * fadeScale);
+
     // Map channels to buffers
     const values = [pan, 0, tilt, 0, 0, dimmer, strobe, colorCh, 0, 0, 0, 0, 0];
     values.forEach((val, ch) => {
@@ -805,7 +918,12 @@ function evaluateStaticBlock(type: string, time: number, isAudioImpact: boolean 
     }
   } else if (type === 'static_dimmer_rise') {
     // Rise white dimmer
-    const progress = Math.max(0, Math.min(1.0, (time - 20.7) / 7.3));
+    let progress = 0;
+    if (time < 3.0) {
+      progress = Math.max(0, Math.min(1.0, (time + 4.3) / 7.3));
+    } else {
+      progress = Math.max(0, Math.min(1.0, (time - 32.0) / 8.0));
+    }
     w = Math.floor(progress * 255);
   } else if (type === 'static_drop_strobe') {
     // Strobe flash
@@ -839,7 +957,21 @@ function evaluateStaticBlock(type: string, time: number, isAudioImpact: boolean 
 
   // Write values to entity IDs 33001 to 33004
   const ids = [33001, 33002, 33003, 33004];
-  const values = [r, g, b, w];
+
+  // Apply global visual fade scale (1.5s fade-in/out)
+  let fadeScale = 1.0;
+  if (time < 1.5) {
+    fadeScale = time / 1.5;
+  } else if (time > 43.5) {
+    fadeScale = Math.max(0, (45.0 - time) / 1.5);
+  }
+
+  const values = [
+    Math.round(r * fadeScale),
+    Math.round(g * fadeScale),
+    Math.round(b * fadeScale),
+    Math.round(w * fadeScale)
+  ];
   
   ids.forEach((id, idx) => {
     const target = activeConfig.entityMap[id];
@@ -851,7 +983,175 @@ function evaluateStaticBlock(type: string, time: number, isAudioImpact: boolean 
   });
 }
 
+function getSingerPixelColor(
+  x: number,
+  y: number,
+  time: number,
+  beatProgress: number,
+  _beatIdx: number,
+  shiftY: number = 6,
+  cropMinY: number | null = null
+): { r: number, g: number, b: number } | null {
+  if (cropMinY !== null && y < cropMinY) {
+    return null;
+  }
+  y = y + shiftY;
+  const dx = x - 64;
+  const beatGlow = 1 - beatProgress;
+
+  const bodyY = y - 30;
+  const torsoWidth = 18 + (bodyY * 0.32);
+  const inTorso = y >= 18 && y <= 67 && Math.abs(dx) < torsoWidth && bodyY >= 0;
+  const inBelly = y >= 18 && y < 30 && Math.abs(dx) < 18;
+  const inNeck = y >= 62 && y <= 76 && Math.abs(dx) < 7;
+  const inLeftArm = x >= 18 && x <= 40 && y >= 18 && y <= 64 && Math.abs((x - 29) - (y - 18) * 0.18) < 8;
+  const inRightArm = x >= 89 && x <= 111 && y >= 16 && y <= 62 && Math.abs((x - 100) + (y - 18) * 0.14) < 8;
+  const inFace = ((dx * dx) / (17 * 17) + ((y - 85) * (y - 85)) / (22 * 22)) < 1;
+  const hairCap = ((dx + 1) * (dx + 1)) / (25 * 25) + ((y - 106) * (y - 106)) / (16 * 16) < 1;
+  const hairCrown = y >= 99 && y <= 124 && Math.abs(dx + 2 + Math.sin(x * 0.55) * 5) < (23 - Math.max(0, y - 113) * 0.7);
+  const hairFringe = y >= 91 && y <= 105 && x >= 42 && x <= 70 && Math.sin((x - 42) * 0.7) * 5 + 98 > y;
+  const sideBurns = (x >= 42 && x <= 49 && y >= 80 && y <= 99) || (x >= 78 && x <= 84 && y >= 82 && y <= 99);
+  const inHair = hairCap || hairCrown || hairFringe || sideBurns;
+  const curl = inHair && ((x * 7 + y * 5 + Math.floor(time * 6)) % 11 < 8);
+
+  const starCx = 55;
+  const starCy = 89;
+  const sx = x - starCx;
+  const sy = y - starCy;
+  const starDist = Math.sqrt(sx * sx + sy * sy);
+  const starAngle = Math.atan2(sy, sx);
+  const starRadius = 7 + 5 * Math.max(0, Math.cos(starAngle * 5));
+  const starCore = starDist < starRadius && starDist > 2;
+  const starCenter = starDist <= 5;
+  const starTail = x >= 42 && x <= 62 && y >= 78 && y <= 101 && Math.abs((y - 90) + (x - 53) * 0.48) < 3.8;
+  const bluePaint = starCenter || starCore || starTail;
+
+  const leftEye = y >= 88 && y <= 90 && x >= 55 && x <= 59;
+  const rightEye = y >= 88 && y <= 90 && x >= 70 && x <= 74;
+
+  const isSinging = (time > 0.65 && time < FIRST_HEY_START) || (time >= 10.85 && time < 16.6) || (time >= 18.25 && time < 26.0);
+  const mouthOpen = isSinging ? 2 + Math.round(5 * Math.max(beatGlow, (Math.sin(time * 14) + 1) / 2)) : 1;
+  const mouth = x >= 59 && x <= 70 && y >= 75 - mouthOpen && y <= 76 + Math.floor(mouthOpen / 2);
+
+  const micHead = ((x - 54) * (x - 54)) / 6 + ((y - 78) * (y - 78)) / 18 < 1;
+  const micHandle = x >= 43 && x <= 49 && y >= 58 && y <= 79 && Math.abs((x - 46) + (y - 68) * 0.18) < 4;
+  const hand = ((x - 48) * (x - 48)) / 70 + ((y - 64) * (y - 64)) / 42 < 1;
+
+  const isPart = inLeftArm || inRightArm || inNeck || inFace || inBelly || inTorso || inHair || bluePaint || leftEye || rightEye || mouth || micHead || micHandle || hand;
+
+  if (!isPart) {
+    return null;
+  }
+
+  let r = 0, g = 0, b = 0;
+
+  if (inLeftArm || inRightArm || inNeck || inFace || inBelly) {
+    r = 205;
+    g = 178 + Math.round(28 * Math.sin(time * 1.7 + x * 0.04));
+    b = 146;
+  }
+
+  if (inTorso) {
+    const mirrorPhase = Math.sin(time * 5.5 + x * 0.18 - y * 0.11);
+    const disc = ((Math.floor((x + y * 0.35) / 5) + Math.floor((y - time * 13) / 5)) % 2) === 0;
+    const glint = ((x * 13 + y * 17 + Math.floor(time * 32)) % 41) < 3;
+    if (glint) {
+      r = 240; g = 255; b = 245;
+    } else if (disc) {
+      r = mirrorPhase > 0.25 ? 0 : 25;
+      g = mirrorPhase > 0.25 ? 220 : 90;
+      b = mirrorPhase > 0.25 ? 190 : 140;
+    } else {
+      r = 26; g = 38; b = 44;
+    }
+  }
+
+  if (inHair) {
+    const highlight = ((x * 5 + y * 3 + Math.floor(time * 3)) % 23) < 3 && y > 101;
+    if (highlight) {
+      r = 70; g = 56; b = 48;
+    } else if (curl) {
+      r = 16; g = 13; b = 12;
+    } else {
+      r = 31; g = 24; b = 20;
+    }
+  }
+
+  if (bluePaint) {
+    r = 0;
+    g = 58 + Math.round(38 * beatGlow);
+    b = 255;
+  }
+
+  if ((leftEye && !bluePaint) || rightEye) {
+    r = 14; g = 18; b = 18;
+  }
+
+  if (mouth) {
+    r = 18; g = 14; b = 17;
+  }
+
+  if (hand) {
+    r = 210; g = 178; b = 140;
+  }
+  if (micHead || micHandle) {
+    r = 32; g = 38; b = 46;
+  }
+  if (micHead && ((x + y) % 3 === 0)) {
+    r = 165; g = 180; b = 190;
+  }
+
+  // Entrance fade logic (only if time < 1.15)
+  const entrance = Math.max(0, Math.min(1, time / 1.15));
+  if (entrance < 1) {
+    const revealLine = 127 - entrance * 140;
+    const noiseGate = ((x * 5 + y * 11) % 17) / 17;
+    if (y < revealLine || noiseGate > entrance + 0.18) {
+      r = Math.round(r * 0.08);
+      g = Math.round(g * 0.08);
+      b = Math.round(b * 0.08);
+    }
+  }
+
+  return { r, g, b };
+}
+
 // Character Masks Pixel Art Rendering Engine (Eurovision 2026 "Tanzschein" inspired)
+function drawCosmoSingerIntro(x: number, y: number, time: number, beatProgress: number, beatIdx: number) {
+  let r = 2, g = 13, b = 16;
+  const dx = x - 64;
+  const beatGlow = 1 - beatProgress;
+
+  const bgWave = Math.sin((x - 64) * 0.09 + time * 3.2) + Math.cos((y - 64) * 0.08 - time * 2.7 + beatIdx * 0.35);
+  if (bgWave > 1.25) {
+    r = 0;
+    g = 34 + Math.round(22 * beatGlow);
+    b = 38 + Math.round(18 * beatGlow);
+  }
+
+  const ringDist = Math.sqrt(dx * dx + (y - 62) * (y - 62));
+  const ring = Math.abs((ringDist + time * 18) % 28 - 14);
+  if (ring < 1.2 && y < 98) {
+    r = Math.max(r, 0);
+    g = Math.max(g, Math.round(70 * beatGlow));
+    b = Math.max(b, Math.round(90 * beatGlow));
+  }
+
+  const sparkle = ((x * 19 + y * 23 + Math.floor(time * 24)) % 97) === 0;
+  if (sparkle) {
+    r = 30;
+    g = 180;
+    b = 160;
+  }
+
+  const singer = getSingerPixelColor(x, y, time, beatProgress, beatIdx);
+  if (singer) {
+    return singer;
+  }
+
+  return { r, g, b };
+}
+
 function drawCharacterMask(type: string, x: number, y: number, _time: number, beatProgress: number) {
   let r = 0, g = 0, b = 0;
   
@@ -1036,113 +1336,132 @@ function isPixelInText(str: string, px: number, py: number, startX: number, star
   return (colByte & (1 << relY)) !== 0;
 }
 
-// Handcoded pixel-perfect drawing for the Chorus "TANZ / SCHEIN" block
-// Bypasses scaling arithmetic bugs to align letters vertically and ensure no clipping
-function isPixelInTextManual(x: number, y: number): boolean {
-  // 1. Top line (TANZ): y from 68 to 88 (startY = 88)
-  if (y >= 68 && y <= 88) {
-    const dy = 88 - y;
-    const relY = Math.floor(dy / 3); // 0..6
-    
-    // T: x from 25 to 39
-    if (x >= 25 && x <= 39) {
-      const relX = Math.floor((x - 25) / 3);
-      const colByte = font['T'][relX];
-      return (colByte & (1 << relY)) !== 0;
-    }
-    // A: x from 46 to 60
-    if (x >= 46 && x <= 60) {
-      const relX = Math.floor((x - 46) / 3);
-      const colByte = font['A'][relX];
-      return (colByte & (1 << relY)) !== 0;
-    }
-    // N: x from 67 to 81
-    if (x >= 67 && x <= 81) {
-      const relX = Math.floor((x - 67) / 3);
-      const colByte = font['N'][relX];
-      return (colByte & (1 << relY)) !== 0;
-    }
-    // Z: x from 88 to 102
-    if (x >= 88 && x <= 102) {
-      const relX = Math.floor((x - 88) / 3);
-      const colByte = font['Z'][relX];
-      return (colByte & (1 << relY)) !== 0;
-    }
-  }
-  
-  // 2. Bottom line (SCHEIN): y from 42 to 62 (startY = 62)
-  if (y >= 42 && y <= 62) {
-    const dy = 62 - y;
-    const relY = Math.floor(dy / 3); // 0..6
-    
-    // S: x from 4 to 18
-    if (x >= 4 && x <= 18) {
-      const relX = Math.floor((x - 4) / 3);
-      const colByte = font['S'][relX];
-      return (colByte & (1 << relY)) !== 0;
-    }
-    // C: x from 25 to 39
-    if (x >= 25 && x <= 39) {
-      const relX = Math.floor((x - 25) / 3);
-      const colByte = font['C'][relX];
-      return (colByte & (1 << relY)) !== 0;
-    }
-    // H: x from 46 to 60
-    if (x >= 46 && x <= 60) {
-      const relX = Math.floor((x - 46) / 3);
-      const colByte = font['H'][relX];
-      return (colByte & (1 << relY)) !== 0;
-    }
-    // E: x from 67 to 81
-    if (x >= 67 && x <= 81) {
-      const relX = Math.floor((x - 67) / 3);
-      const colByte = font['E'][relX];
-      return (colByte & (1 << relY)) !== 0;
-    }
-    // I: x from 88 to 102
-    if (x >= 88 && x <= 102) {
-      const relX = Math.floor((x - 88) / 3);
-      const colByte = font['I'][relX];
-      return (colByte & (1 << relY)) !== 0;
-    }
-    // N: x from 109 to 123
-    if (x >= 109 && x <= 123) {
-      const relX = Math.floor((x - 109) / 3);
-      const colByte = font['N'][relX];
-      return (colByte & (1 << relY)) !== 0;
-    }
-  }
-  
-  return false;
+function getWallRenderType(type: string, time: number): string {
+  if (type === 'black') return type;
+  if (time < FIRST_HEY_START) return 'cosmo_singer_intro';
+  if (time >= REFRAIN_LYRICS_START && time < REFRAIN_LYRICS_END) return 'quadrant_flashes_no_mask';
+  if (time >= REFRAIN_LYRICS_END && time <= SHOW_END) return 'laser_sweeps';
+  return type;
 }
+
+function getLyricCueAtTime(time: number): LyricCue | null {
+  return LYRIC_CUES.find((cue) => time >= cue.startTime && time < cue.endTime) ?? null;
+}
+
+function getHeyCueAtTime(time: number): LyricCue | null {
+  const cue = getLyricCueAtTime(time);
+  return cue?.kind === 'hey' ? cue : null;
+}
+
+function getTextLyricCueAtTime(time: number): LyricCue | null {
+  const cue = getLyricCueAtTime(time);
+  return cue && cue.kind !== 'hey' ? cue : null;
+}
+
+function getLyricAccentAtTime(time: number): readonly [number, number, number] {
+  const palette: readonly (readonly [number, number, number])[] = [
+    [0, 255, 255],   // cyan
+    [255, 0, 150],   // magenta
+    [235, 180, 45],  // gold
+    [80, 255, 120],  // green
+  ];
+  const cue = getTextLyricCueAtTime(time);
+  if (!cue) return [255, 0, 150];
+
+  const cueIndex = LYRIC_CUES.filter((item) => item.kind !== 'hey').indexOf(cue);
+  return palette[Math.max(0, cueIndex) % palette.length];
+}
+
+function getReadableScale(lines: readonly string[], preferredScale: number): number {
+  const maxLen = Math.max(...lines.map((line) => line.length));
+  if (maxLen <= 6) return preferredScale;
+  if (maxLen <= 9) return Math.min(preferredScale, 2);
+  return 1;
+}
+
+function getFinalLyricOverlayPixel(time: number, x: number, y: number, beatIdx: number): { r: number; g: number; b: number } | null {
+  const cue = getTextLyricCueAtTime(time);
+  if (!cue) return null;
+
+  const elapsed = time - cue.startTime;
+  const bandTop = 36;
+  const bandBottom = 95;
+  if (y < bandTop || y > bandBottom) return null;
+
+  const accent = getLyricAccentAtTime(time);
+  const invertActive = beatIdx % 2 === 0;
+  const inText = isPixelInSequentialLyric(cue.lines, x, y, 3, elapsed);
+
+  const bandOn = elapsed > 0.04;
+  if (!bandOn && !inText) return null;
+
+  if (inText) {
+    return invertActive
+      ? { r: 4, g: 4, b: 10 }
+      : { r: accent[0], g: accent[1], b: accent[2] };
+  }
+
+  const border = y === bandTop || y === bandBottom || y === bandTop + 1 || y === bandBottom - 1;
+  const scan = Math.floor((x + time * 90) / 8) % 8 === 0;
+
+  if (invertActive) {
+    const boost = border || scan ? 1 : 0.55;
+    return {
+      r: Math.round(accent[0] * boost),
+      g: Math.round(accent[1] * boost),
+      b: Math.round(accent[2] * boost),
+    };
+  }
+
+  if (border || scan) {
+    return {
+      r: Math.round(accent[0] * 0.7),
+      g: Math.round(accent[1] * 0.7),
+      b: Math.round(accent[2] * 0.7),
+    };
+  }
+
+  return { r: 2, g: 3, b: 12 };
+}
+
+function isPixelInSequentialLyric(lines: readonly string[], x: number, y: number, preferredScale: number, elapsed: number): boolean {
+  const scale = getReadableScale(lines, preferredScale);
+  const spacingWidth = 7;
+  const fontWidth = spacingWidth * scale;
+  const ySlots = lines.length === 1
+    ? [scale >= 3 ? 75 : scale === 2 ? 67 : 65]
+    : scale >= 3
+      ? [88, 62]
+      : scale === 2
+        ? [76, 58]
+        : [72, 61];
+
+  return lines.some((line, idx) => {
+    const delay = idx * 0.32;
+    const progress = Math.max(0, Math.min(1, (elapsed - delay) / 0.22));
+    if (progress <= 0) return false;
+
+    const startX = 64 - Math.round((line.length * fontWidth) / 2);
+    const startY = (ySlots[idx] ?? ySlots[0]) - Math.round((1 - progress) * 5);
+    const width = line.length * fontWidth;
+    const dx = x - startX;
+    if (dx < 0 || dx > width * progress) return false;
+
+    if (!isPixelInText(line, x, y, startX, startY, scale, spacingWidth)) return false;
+
+    if (progress < 0.95 && ((x * 11 + y * 7) % 17) / 17 > progress) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
+
 
 // Maps timeline playback progress to song lyrics
 function getLyricsAtTime(time: number): string {
-  if (time >= 5.9 && time < 7.7) return "STEH' VOR DEM CLUB";
-  if (time >= 7.7 && time < 9.6) return "LUST AUF TANZ?";
-  if (time >= 9.6 && time < 11.4) return "SUCHE EKSTASE";
-  if (time >= 11.4 && time < 13.3) return "TIER-OASE";
-  
-  if (time >= 13.3 && time < 15.1) return "GAR NICHT WAHR";
-  if (time >= 15.1 && time < 17.0) return "ZUM AFFEN";
-  if (time >= 17.0 && time < 18.8) return "KEIN TAENZER";
-  if (time >= 18.8 && time < 20.7) return "EINE IDEE";
-  
-  if (time >= 20.7 && time < 22.5) return "EIN KONZEPT";
-  if (time >= 22.5 && time < 24.3) return "PERFEKT!";
-  if (time >= 24.3 && time < 28.0) return "TANZSCHEIN...";
-  
-  if (time >= 28.0 && time < 29.8) return "TANZSCHEIN";
-  if (time >= 29.8 && time < 31.7) return "STRENG SEIN";
-  if (time >= 31.7 && time < 33.5) return "OHNE SCHEIN";
-  if (time >= 33.5 && time < 35.4) return "NICHT REIN";
-  if (time >= 35.4 && time < 37.2) return "TANZSCHEIN?";
-  if (time >= 37.2 && time < 39.1) return "KEIN WITZ";
-  if (time >= 39.1 && time < 40.9) return "OHNE SCHEIN";
-  if (time >= 40.9 && time < 42.8) return "NICHT REIN";
-  if (time >= 42.8 && time <= 45.0) return "TANZEN!";
-  
-  return "";
+  return getLyricCueAtTime(time)?.lines.join(' ') ?? "";
 }
 
 function applyInteractiveOverrides(key: string, time: number) {
@@ -1251,6 +1570,42 @@ function sendPreviewToClients() {
     lyrics: getLyricsAtTime(playbackTime),
     data: previewData,
   });
+}
+
+function getWallDimensions() {
+  const configAny = activeConfig as any;
+  const width = Number(configAny?.ledWall?.visibleWidth);
+  const height = Number(configAny?.ledWall?.visibleHeight);
+
+  return {
+    width: Number.isFinite(width) && width > 0 ? Math.round(width) : LED_WALL_WIDTH,
+    height: Number.isFinite(height) && height > 0 ? Math.round(height) : LED_WALL_HEIGHT,
+  };
+}
+
+function evaluateImageFrame(frame: { width: number; height: number; rgba: Uint8Array }) {
+  const { width: visibleWidth, height: visibleHeight } = getWallDimensions();
+
+  for (let physicalX = 0; physicalX < visibleWidth; physicalX++) {
+    for (let physicalY = 0; physicalY < visibleHeight; physicalY++) {
+      const id = getWallEntityId(physicalX, visibleHeight - 1 - physicalY);
+      const target = activeConfig.entityMap[id];
+      if (!target) continue;
+
+      const srcX = Math.min(frame.width - 1, Math.floor((physicalX / visibleWidth) * frame.width));
+      const srcY = Math.min(frame.height - 1, Math.floor((physicalY / visibleHeight) * frame.height));
+      const idx = (srcY * frame.width + srcX) * 4;
+      const r = frame.rgba[idx] ?? 0;
+      const g = frame.rgba[idx + 1] ?? 0;
+      const b = frame.rgba[idx + 2] ?? 0;
+
+      const buf = getUniverseBuffer(target.ip, target.universe);
+      buf[target.channel] = r;
+      buf[target.channel + 1] = g;
+      buf[target.channel + 2] = b;
+      dirtyUniverses.add(`${target.ip}:${target.universe}`);
+    }
+  }
 }
 
 function sendBlackout() {
@@ -1379,18 +1734,24 @@ wss.on('connection', (ws) => {
       } else if (msg.type === 'play') {
         activePreviewBlock = null;
         activeTestPattern = null;
+        activeImageFrame = null;
         isPlaying = true;
         playbackStartRealTime = Date.now() - playbackTime * 1000;
         updateRouterState();
+      } else if (msg.type === 'demo-start') {
+        startShowFromBeginning();
+        broadcastToClients({ type: 'log', message: 'Final demo mode started from 0.00s.' });
       } else if (msg.type === 'stop') {
         activePreviewBlock = null;
         activeTestPattern = null;
+        activeImageFrame = null;
         isPlaying = false;
         playbackTime = 0;
         updateRouterState();
       } else if (msg.type === 'blackout') {
         activePreviewBlock = null;
         activeTestPattern = null;
+        activeImageFrame = null;
         isPlaying = false;
         playbackTime = 0;
         activeOverride = null;
@@ -1398,12 +1759,14 @@ wss.on('connection', (ws) => {
       } else if (msg.type === 'override') {
         activePreviewBlock = null;
         activeTestPattern = null;
+        activeImageFrame = null;
         activeOverride = msg.key;
         console.log(`[Override] ${msg.key ? 'ACTIVATED: ' + msg.key : 'RELEASED'} | isPlaying=${isPlaying} | loopRunning=${routeInterval !== null}`);
         updateRouterState();
         console.log(`[Override] After updateRouterState: loopRunning=${routeInterval !== null}`);
       } else if (msg.type === 'test-controller') {
         activePreviewBlock = null;
+        activeImageFrame = null;
         const { controllerIdx, color } = msg;
         if (activeTestPattern && activeTestPattern.type === 'controller' && activeTestPattern.controllerIdx === controllerIdx) {
           // Toggle off
@@ -1421,6 +1784,7 @@ wss.on('connection', (ws) => {
         }
       } else if (msg.type === 'test-all') {
         activePreviewBlock = null;
+        activeImageFrame = null;
         if (activeTestPattern && activeTestPattern.type === 'all') {
           // Toggle off
           activeTestPattern = null;
@@ -1556,6 +1920,46 @@ app.post('/api/show/reset', (_req, res) => {
   } catch (e) {
     res.status(500).json({ success: false, error: (e as Error).message });
   }
+});
+
+app.post('/api/image-wall', (req, res) => {
+  try {
+    const { width, height, rgbaBase64 } = req.body as {
+      width: number;
+      height: number;
+      rgbaBase64: string;
+    };
+
+    if (!width || !height || !rgbaBase64) {
+      res.status(400).json({ success: false, error: 'Missing width, height, or rgbaBase64.' });
+      return;
+    }
+
+    const rgba = new Uint8Array(Buffer.from(rgbaBase64, 'base64'));
+    activePreviewBlock = null;
+    activeTestPattern = null;
+    activeImageFrame = { width, height, rgba };
+    isPlaying = false;
+    playbackTime = 0;
+    activeOverride = null;
+    updateRouterState();
+
+    res.json({
+      success: true,
+      message: 'Image frame sent to wall.',
+      width,
+      height,
+      bytes: rgba.length,
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, error: (e as Error).message });
+  }
+});
+
+app.delete('/api/image-wall', (_req, res) => {
+  activeImageFrame = null;
+  updateRouterState();
+  res.json({ success: true, message: 'Image frame cleared.' });
 });
 
 // Debug endpoint - shows diagnostics for troubleshooting
