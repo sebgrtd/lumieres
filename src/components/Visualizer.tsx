@@ -177,8 +177,8 @@ export const Visualizer: React.FC<VisualizerProps> = ({ frameState, config }) =>
   }, [frameState, movingHeadsCount]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', width: '100%', height: '100%' }}>
-      <div className="card" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', position: 'relative', minHeight: '350px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', width: '100%', height: 'auto' }}>
+      <div className="card" style={{ height: 'min(52vh, 520px)', minHeight: '380px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
         <div style={{ position: 'absolute', top: '12px', left: '15px' }} className="badge badge-red">
           Mur LED {wallWidth}x{wallHeight}
         </div>
@@ -196,14 +196,14 @@ export const Visualizer: React.FC<VisualizerProps> = ({ frameState, config }) =>
         </div>
       </div>
 
-      <div className="card" style={{ height: '220px', position: 'relative', padding: '0', overflow: 'hidden' }}>
+      <div className="card" style={{ height: '180px', position: 'relative', padding: '0', overflow: 'hidden' }}>
         <div style={{ position: 'absolute', top: '12px', left: '15px', zIndex: 10 }} className="badge badge-gold">
           DMX Lyres (Univers 33)
         </div>
         <canvas
           ref={lyresCanvasRef}
           width={600}
-          height={220}
+          height={180}
           style={{ width: '100%', height: '100%', display: 'block' }}
         />
       </div>

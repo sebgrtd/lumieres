@@ -499,7 +499,7 @@ export function ImageStudio({ config }: ImageStudioProps) {
 
   const applyWallPreset = (): void => {
     if (!wallSize) {
-      setStatus('Aucun preset écran détecté dans la configuration.');
+      setStatus('Aucun preset ecran detecte dans la configuration.');
       return;
     }
 
@@ -509,7 +509,7 @@ export function ImageStudio({ config }: ImageStudioProps) {
     setExportHeight(wallSize.height);
     setExportFormat('jpeg');
     setJpegQuality(85);
-    setStatus(`Preset écran activé: ${wallSize.width} x ${wallSize.height}, rendu en cover.`);
+    setStatus(`Preset ecran active: ${wallSize.width} x ${wallSize.height}, rendu en cover.`);
   };
 
   const sendToWall = async (): Promise<void> => {
@@ -519,7 +519,7 @@ export function ImageStudio({ config }: ImageStudioProps) {
     }
 
     if (!wallSize) {
-      setStatus('Aucune taille de wall détectée dans la config.');
+      setStatus('Aucune taille de wall detectee dans la config.');
       return;
     }
 
@@ -597,7 +597,7 @@ export function ImageStudio({ config }: ImageStudioProps) {
 
   const toggleFitToWall = (): void => {
     if (!wallSize) {
-      setStatus('Aucun preset écran détecté dans la configuration.');
+      setStatus('Aucun preset ecran detecte dans la configuration.');
       return;
     }
 
@@ -609,9 +609,9 @@ export function ImageStudio({ config }: ImageStudioProps) {
         setExportHeight(wallSize.height);
         setExportFormat('jpeg');
         setJpegQuality(85);
-        setStatus(`Fit to LED wall activé: ${wallSize.width} x ${wallSize.height}.`);
+        setStatus(`Fit to LED wall active: ${wallSize.width} x ${wallSize.height}.`);
       } else {
-        setStatus('Fit to LED wall désactivé.');
+        setStatus('Fit to LED wall desactive.');
       }
       return next;
     });
@@ -631,10 +631,10 @@ export function ImageStudio({ config }: ImageStudioProps) {
             <ImagePlus size={14} />
             Image Studio
           </div>
-          <h2 style={{ fontSize: '1.6rem', marginBottom: '8px' }}>Édition et conversion d’images dans le navigateur</h2>
+          <h2 style={{ fontSize: '1.6rem', marginBottom: '8px' }}>Edition et conversion d'images dans le navigateur</h2>
           <p style={{ color: 'var(--text-secondary)', maxWidth: '72ch', lineHeight: 1.55 }}>
-            Charge un PNG, JPG, WebP ou SVG, applique les réglages, puis exporte en PNG, JPG, WebP ou SVG.
-            L’export SVG est un wrapper qui encapsule le rendu courant sous forme raster.
+            Charge un PNG, JPG, WebP ou SVG, applique les reglages, puis exporte en PNG, JPG, WebP ou SVG.
+            L'export SVG est un wrapper qui encapsule le rendu courant sous forme raster.
           </p>
         </div>
 
@@ -671,7 +671,7 @@ export function ImageStudio({ config }: ImageStudioProps) {
                 Import
               </div>
               <div>
-                <div style={{ fontWeight: 600 }}>Glisse un fichier ou sélectionne une image</div>
+                <div style={{ fontWeight: 600 }}>Glisse un fichier ou selectionne une image</div>
                 <div style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>PNG, JPG, WebP ou SVG depuis ton disque</div>
               </div>
             </div>
@@ -760,7 +760,7 @@ export function ImageStudio({ config }: ImageStudioProps) {
                     Preview
                   </div>
                   <p style={{ lineHeight: 1.6 }}>
-                    Le rendu apparaît ici dès qu’un fichier est chargé. Tu peux ensuite exporter le résultat modifié.
+                    Le rendu apparait ici des qu'un fichier est charge. Tu peux ensuite exporter le resultat modifie.
                   </p>
                 </div>
               )}
@@ -837,7 +837,7 @@ export function ImageStudio({ config }: ImageStudioProps) {
               </button>
               <button className="secondary" onClick={() => setRotation((prev) => (prev + 90) % 360)} style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
                 <RotateCcw size={16} />
-                Rotate 90°
+                Rotate 90?
               </button>
             </div>
           </div>
@@ -984,13 +984,13 @@ export function ImageStudio({ config }: ImageStudioProps) {
                 <div style={{ color: 'var(--text-secondary)' }}>Size</div>
                 <div>{loadedMeta.width} x {loadedMeta.height}</div>
                 <div style={{ color: 'var(--text-secondary)' }}>Rotation</div>
-                <div>{rotation}°</div>
+                <div>{rotation}?</div>
                 <div style={{ color: 'var(--text-secondary)' }}>Filters</div>
                 <div>brightness, contrast, saturation, grayscale, opacity</div>
               </div>
             ) : (
               <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', lineHeight: 1.5 }}>
-                Aucun fichier chargé pour le moment.
+                Aucun fichier charge pour le moment.
               </div>
             )}
           </div>
