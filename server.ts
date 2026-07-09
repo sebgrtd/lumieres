@@ -209,6 +209,16 @@ let currentTelemetry: TelemetryState = {
 
 let activeTestPattern: { type: 'controller' | 'all'; controllerIdx?: number; color?: number[] } | null = null;
 
+function startShowFromBeginning() {
+  activeTestPattern = null;
+  activeOverride = null;
+  playbackTime = 0;
+  playbackStartRealTime = Date.now();
+  isPlaying = true;
+  dirtyUniverses.clear();
+  updateRouterState();
+}
+
 // 40Hz Main Loop Manager
 function updateRouterState() {
   const needsLoop = isPlaying || activeOverride !== null || activeTestPattern !== null;
@@ -1294,6 +1304,9 @@ wss.on('connection', (ws) => {
         isPlaying = true;
         playbackStartRealTime = Date.now() - playbackTime * 1000;
         updateRouterState();
+      } else if (msg.type === 'demo-start') {
+        startShowFromBeginning();
+        broadcastToClients({ type: 'log', message: 'Final demo mode started from 0.00s.' });
       } else if (msg.type === 'stop') {
         activeTestPattern = null;
         isPlaying = false;
