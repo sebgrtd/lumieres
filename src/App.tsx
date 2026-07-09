@@ -633,6 +633,13 @@ export default function App() {
   const configuredEntities = Object.keys(config?.entityMap || {}).length;
   const demoLanes = new Set(blocks.map((block) => block.lane));
   const demoReady = wsConnected && configuredControllers > 0 && configuredEntities > 0 && blocks.length > 0;
+  const toggleBenchmark = () => {
+    blurAll();
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: telemetry.benchmarkActive ? 'benchmark-stop' : 'benchmark-start' }));
+    }
+    addLog(telemetry.benchmarkActive ? 'Stopping routing benchmark.' : 'Starting full wall routing benchmark.');
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
@@ -770,6 +777,8 @@ export default function App() {
                   <span className={`badge ${detectedBeatsCount ? 'badge-green' : 'badge-gold'}`}>{detectedBeatsCount ? `${detectedBeatsCount} beats synced` : 'Audio analysis pending'}</span>
                   <span className={`badge ${showDirty ? 'badge-red' : 'badge-green'}`}>{showDirty ? 'Save show pending' : 'Show saved'}</span>
                   <span className={`badge ${configuredControllers > 0 ? 'badge-green' : 'badge-red'}`}>Physical config</span>
+                  <span className={`badge ${telemetry.droppedFrames === 0 ? 'badge-green' : 'badge-red'}`}>{telemetry.droppedFrames ?? 0} dropped</span>
+                  <span className="badge badge-cyan">{telemetry.avgFrameTimeMs ?? 0}ms avg</span>
                 </div>
               </div>
 
@@ -1368,28 +1377,52 @@ export default function App() {
                   <h3 style={{ fontSize: '1.1rem' }}>DMX / ArtNet Debug Monitor</h3>
                   <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Live snapshot before ArtNet encapsulation and network send.</span>
                 </div>
-                <button
-                  className="secondary"
-                  onClick={() => {
-                    setSelectedUniverseKey('');
-                    setDmxMonitor(null);
-                  }}
-                >
-                  Refresh Snapshot
-                </button>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button
+                    className={telemetry.benchmarkActive ? '' : 'secondary'}
+                    onClick={toggleBenchmark}
+                  >
+                    {telemetry.benchmarkActive ? 'Stop Stress Test' : 'Full Wall Stress Test'}
+                  </button>
+                  <button
+                    className="secondary"
+                    onClick={() => {
+                      setSelectedUniverseKey('');
+                      setDmxMonitor(null);
+                    }}
+                  >
+                    Refresh Snapshot
+                  </button>
+                </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: '10px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: '10px' }}>
                 {[
                   ['Loop', dmxMonitor?.loopRunning ? 'RUNNING' : 'STOPPED', dmxMonitor?.loopRunning ? '#22c55e' : 'var(--text-muted)'],
                   ['Buffers', String(dmxMonitor?.bufferCount ?? 0), 'var(--color-cyan)'],
                   ['Entities', String(dmxMonitor?.entityCount ?? 0), 'var(--color-gold)'],
                   ['Dirty/frame', String(dmxMonitor?.dirtyUniverses?.length ?? 0), 'var(--color-red)'],
                   ['Packets', String(dmxMonitor?.lastArtNetPackets?.length ?? 0), '#22c55e'],
+                  ['Benchmark', telemetry.benchmarkActive ? 'ACTIVE' : 'IDLE', telemetry.benchmarkActive ? '#22c55e' : 'var(--text-muted)'],
                 ].map(([label, value, color]) => (
                   <div key={label} style={{ backgroundColor: 'var(--bg-base)', border: '1px solid var(--border-muted)', borderRadius: '6px', padding: '10px' }}>
                     <span style={{ display: 'block', fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>{label}</span>
                     <span style={{ fontFamily: 'JetBrains Mono', color }}>{value}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: '10px' }}>
+                {[
+                  ['FPS', telemetry.fps ?? 0],
+                  ['Avg frame', `${telemetry.avgFrameTimeMs ?? 0}ms`],
+                  ['Max frame', `${telemetry.maxFrameTimeMs ?? 0}ms`],
+                  ['Dirty U/frame', telemetry.dirtyUniversesPerFrame ?? 0],
+                  ['ArtNet/frame', telemetry.artNetPacketsPerFrame ?? 0],
+                ].map(([label, value]) => (
+                  <div key={label} style={{ backgroundColor: 'var(--bg-base)', border: '1px solid var(--border-muted)', borderRadius: '6px', padding: '10px' }}>
+                    <span style={{ display: 'block', fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>{label}</span>
+                    <span style={{ fontFamily: 'JetBrains Mono', color: 'var(--text-primary)' }}>{value}</span>
                   </div>
                 ))}
               </div>

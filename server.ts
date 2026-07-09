@@ -271,6 +271,10 @@ let stats = {
   framesProcessed: 0,
   droppedFrames: 0,
   ehubPacketsReceived: 0,
+  frameTimeTotalMs: 0,
+  maxFrameTimeMs: 0,
+  dirtyUniversesTotal: 0,
+  artNetPacketsTotal: 0,
 };
 
 let lastStatsTime = Date.now();
@@ -284,6 +288,12 @@ interface TelemetryState {
   isPlaying: boolean;
   loopRunning: boolean;
   activeTestPattern: { type: 'controller' | 'all'; controllerIdx?: number } | null;
+  benchmarkActive: boolean;
+  avgFrameTimeMs: number;
+  maxFrameTimeMs: number;
+  droppedFrames: number;
+  dirtyUniversesPerFrame: number;
+  artNetPacketsPerFrame: number;
 }
 
 let currentTelemetry: TelemetryState = {
@@ -296,10 +306,17 @@ let currentTelemetry: TelemetryState = {
   isPlaying: false,
   loopRunning: false,
   activeTestPattern: null,
+  benchmarkActive: false,
+  avgFrameTimeMs: 0,
+  maxFrameTimeMs: 0,
+  droppedFrames: 0,
+  dirtyUniversesPerFrame: 0,
+  artNetPacketsPerFrame: 0,
 };
 
 let activeTestPattern: { type: 'controller' | 'all'; controllerIdx?: number; color?: number[] } | null = null;
 let activeImageFrame: { width: number; height: number; rgba: Uint8Array } | null = null;
+let benchmarkActive = false;
 
 function startShowFromBeginning() {
   activeTestPattern = null;
@@ -313,12 +330,13 @@ function startShowFromBeginning() {
 
 // 40Hz Main Loop Manager
 function updateRouterState() {
-  const needsLoop = isPlaying || activeOverride !== null || activeTestPattern !== null || activeImageFrame !== null || activePreviewBlock !== null;
+  const needsLoop = isPlaying || activeOverride !== null || activeTestPattern !== null || activeImageFrame !== null || activePreviewBlock !== null || benchmarkActive;
 
   if (needsLoop) {
     if (!routeInterval) {
       console.log('Starting ArtNet transmission loop (40Hz)...');
       routeInterval = setInterval(() => {
+        const frameStartedAt = performance.now();
         // 1. Advance Playback Clock if show is playing (using real-world time to avoid interval lag)
         if (isPlaying) {
           const now = Date.now();
@@ -336,7 +354,9 @@ function updateRouterState() {
         }
 
         // 2. Evaluate active blocks & generate DMX values
-        if (activePreviewBlock) {
+        if (benchmarkActive) {
+          evaluateBenchmarkFrame(Date.now() / 1000);
+        } else if (activePreviewBlock) {
           const duration = Math.max(0.1, activePreviewBlock.endTime - activePreviewBlock.startTime);
           const previewElapsed = ((Date.now() - previewStartRealTime) / 1000) % duration;
           playbackTime = activePreviewBlock.startTime + previewElapsed;
@@ -398,6 +418,8 @@ function updateRouterState() {
         }
 
         // 3. Send dirty universes to controllers via ArtNet
+        const dirtyCountThisFrame = dirtyUniverses.size;
+        let packetsThisFrame = 0;
         dirtyUniverses.forEach((key) => {
           const [ip, univStr] = key.split(':');
           const univ = parseInt(univStr, 10);
@@ -409,6 +431,7 @@ function updateRouterState() {
             if (buf) {
               artnetSender.send(artnetUniverse, buf, { ip });
               stats.packetsSent++;
+              packetsThisFrame++;
               stats.bytesSent += 18 + buf.length;
               packetCountPerIp.set(ip, (packetCountPerIp.get(ip) || 0) + 1);
               lastArtNetPackets.unshift({ ip, universe: univ, artnetUniverse, bytes: buf.length, sentAt: Date.now() });
@@ -420,6 +443,12 @@ function updateRouterState() {
         lastDirtyUniverseKeys = Array.from(dirtyUniverses);
         dirtyUniverses.clear();
         stats.framesProcessed++;
+        stats.dirtyUniversesTotal += dirtyCountThisFrame;
+        stats.artNetPacketsTotal += packetsThisFrame;
+        const frameTimeMs = performance.now() - frameStartedAt;
+        stats.frameTimeTotalMs += frameTimeMs;
+        stats.maxFrameTimeMs = Math.max(stats.maxFrameTimeMs, frameTimeMs);
+        if (frameTimeMs > 25) stats.droppedFrames++;
 
         // 4. Send downsampled frame previews to frontend (every 3 frames, ~13 FPS to conserve WS bandwidth)
         if (stats.framesProcessed % 3 === 0) {
@@ -439,6 +468,27 @@ function updateRouterState() {
 }
 
 // Visual generators running fully on backend
+
+function evaluateBenchmarkFrame(time: number) {
+  forEachVisibleWallPixel((physicalX, physicalY, x, y) => {
+    const id = getWallEntityId(physicalX, physicalY);
+    const target = activeConfig.entityMap[id];
+    if (!target) return;
+
+    const wave = Math.sin((x + time * 48) * 0.12) + Math.cos((y - time * 36) * 0.1);
+    const r = Math.round(127 + 128 * Math.sin(time * 3 + x * 0.08));
+    const g = Math.round(127 + 128 * Math.sin(time * 4 + y * 0.08));
+    const b = Math.round(127 + 128 * Math.sin(time * 5 + wave));
+    const buf = getUniverseBuffer(target.ip, target.universe);
+    buf[target.channel] = r;
+    buf[target.channel + 1] = g;
+    buf[target.channel + 2] = b;
+    dirtyUniverses.add(`${target.ip}:${target.universe}`);
+  });
+
+  evaluateLyresBlock('lyre_drop_trap', time, true);
+  evaluateStaticBlock('static_drop_strobe', time, true);
+}
 
 function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = false, params?: EffectParams) {
   time = getEffectTime(time, params);
@@ -1657,11 +1707,22 @@ setInterval(() => {
       isPlaying,
       loopRunning: routeInterval !== null,
       activeTestPattern: activeTestPattern ? { type: activeTestPattern.type, controllerIdx: activeTestPattern.controllerIdx } : null,
+      benchmarkActive,
+      avgFrameTimeMs: stats.framesProcessed > 0 ? Number((stats.frameTimeTotalMs / stats.framesProcessed).toFixed(2)) : 0,
+      maxFrameTimeMs: Number(stats.maxFrameTimeMs.toFixed(2)),
+      droppedFrames: stats.droppedFrames,
+      dirtyUniversesPerFrame: stats.framesProcessed > 0 ? Number((stats.dirtyUniversesTotal / stats.framesProcessed).toFixed(2)) : 0,
+      artNetPacketsPerFrame: stats.framesProcessed > 0 ? Number((stats.artNetPacketsTotal / stats.framesProcessed).toFixed(2)) : 0,
     };
     stats.framesProcessed = 0;
     stats.packetsSent = 0;
     stats.bytesSent = 0;
     stats.ehubPacketsReceived = 0;
+    stats.frameTimeTotalMs = 0;
+    stats.maxFrameTimeMs = 0;
+    stats.dirtyUniversesTotal = 0;
+    stats.artNetPacketsTotal = 0;
+    stats.droppedFrames = 0;
     lastStatsTime = now;
 
     broadcastToClients({ type: 'telemetry', data: currentTelemetry });
@@ -1737,6 +1798,7 @@ wss.on('connection', (ws) => {
         console.log(`[Audio] Received ${detectedBeats.length} beat timestamps from client. First 5 beats: ${JSON.stringify(detectedBeats.slice(0, 5))}`);
         broadcastToClients({ type: 'log', message: `Synchronized ${detectedBeats.length} beat triggers with server.` });
       } else if (msg.type === 'play') {
+        benchmarkActive = false;
         activePreviewBlock = null;
         activeTestPattern = null;
         activeImageFrame = null;
@@ -1747,6 +1809,7 @@ wss.on('connection', (ws) => {
         startShowFromBeginning();
         broadcastToClients({ type: 'log', message: 'Final demo mode started from 0.00s.' });
       } else if (msg.type === 'stop') {
+        benchmarkActive = false;
         activePreviewBlock = null;
         activeTestPattern = null;
         activeImageFrame = null;
@@ -1754,6 +1817,7 @@ wss.on('connection', (ws) => {
         playbackTime = 0;
         updateRouterState();
       } else if (msg.type === 'blackout') {
+        benchmarkActive = false;
         activePreviewBlock = null;
         activeTestPattern = null;
         activeImageFrame = null;
@@ -1762,6 +1826,7 @@ wss.on('connection', (ws) => {
         activeOverride = null;
         updateRouterState();
       } else if (msg.type === 'override') {
+        benchmarkActive = false;
         activePreviewBlock = null;
         activeTestPattern = null;
         activeImageFrame = null;
@@ -1770,6 +1835,7 @@ wss.on('connection', (ws) => {
         updateRouterState();
         console.log(`[Override] After updateRouterState: loopRunning=${routeInterval !== null}`);
       } else if (msg.type === 'test-controller') {
+        benchmarkActive = false;
         activePreviewBlock = null;
         activeImageFrame = null;
         const { controllerIdx, color } = msg;
@@ -1788,6 +1854,7 @@ wss.on('connection', (ws) => {
           broadcastToClients({ type: 'log', message: `Streaming test pattern to ${ctrl?.ip || 'unknown'}` });
         }
       } else if (msg.type === 'test-all') {
+        benchmarkActive = false;
         activePreviewBlock = null;
         activeImageFrame = null;
         if (activeTestPattern && activeTestPattern.type === 'all') {
@@ -1804,6 +1871,7 @@ wss.on('connection', (ws) => {
           broadcastToClients({ type: 'log', message: 'Streaming test pattern to ALL controllers (R/G/B/Y).' });
         }
       } else if (msg.type === 'preview-block') {
+        benchmarkActive = false;
         activeTestPattern = null;
         activeOverride = null;
         isPlaying = false;
@@ -1815,6 +1883,19 @@ wss.on('connection', (ws) => {
         activePreviewBlock = null;
         updateRouterState();
         broadcastToClients({ type: 'log', message: 'Segment preview stopped.' });
+      } else if (msg.type === 'benchmark-start') {
+        activePreviewBlock = null;
+        activeTestPattern = null;
+        activeImageFrame = null;
+        activeOverride = null;
+        isPlaying = false;
+        benchmarkActive = true;
+        updateRouterState();
+        broadcastToClients({ type: 'log', message: 'Full wall routing benchmark started.' });
+      } else if (msg.type === 'benchmark-stop') {
+        benchmarkActive = false;
+        updateRouterState();
+        broadcastToClients({ type: 'log', message: 'Routing benchmark stopped.' });
       }
     } catch (e) {
       console.error('Error handling WebSocket message:', e);
