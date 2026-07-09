@@ -17,7 +17,7 @@ import {
   type FixtureConfig,
   type LedWallConfig,
 } from './src/router/mapping.ts';
-import { SHOW_DURATION_SECONDS, SHOW_TIMELINE, type TimelineBlock } from './src/timeline/showTimeline.ts';
+import { SHOW_DURATION_SECONDS, SHOW_TIMELINE, type EffectParams, type TimelineBlock } from './src/timeline/showTimeline.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -121,6 +121,78 @@ rebuildUniverseRouteMap();
 const BPM = 130;
 const BEAT_DURATION = 60 / BPM; // ~0.4615s
 const AUDIO_OFFSET = 0.1; // adjust if audio start has delay
+const DEFAULT_EFFECT_PARAMS: EffectParams = {
+  intensity: 1,
+  color: '#ffffff',
+  speed: 1,
+  strobe: 0,
+};
+
+let timelineBlocks: TimelineBlock[] = loadTimelineFromDisk();
+
+function clampNumber(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function normalizeEffectParams(input?: Partial<EffectParams>): EffectParams {
+  const color = typeof input?.color === 'string' && /^#[0-9a-f]{6}$/i.test(input.color)
+    ? input.color
+    : DEFAULT_EFFECT_PARAMS.color;
+
+  return {
+    intensity: clampNumber(input?.intensity, DEFAULT_EFFECT_PARAMS.intensity, 0, 1.5),
+    color,
+    speed: clampNumber(input?.speed, DEFAULT_EFFECT_PARAMS.speed, 0.25, 3),
+    strobe: clampNumber(input?.strobe, DEFAULT_EFFECT_PARAMS.strobe, 0, 1),
+  };
+}
+
+function normalizeTimelineBlock(block: Partial<TimelineBlock>, index: number): TimelineBlock {
+  const lane = block.lane === 'lyres' || block.lane === 'static' ? block.lane : 'wall';
+  const startTime = Math.max(0, Number(block.startTime) || 0);
+  const endTime = Math.min(SHOW_DURATION_SECONDS, Math.max(startTime + 0.1, Number(block.endTime) || startTime + 1));
+
+  return {
+    id: String(block.id || `block-${Date.now()}-${index}`),
+    lane,
+    startTime: Number(startTime.toFixed(2)),
+    endTime: Number(endTime.toFixed(2)),
+    type: String(block.type || (lane === 'static' ? 'static_off' : 'black')),
+    name: String(block.name || 'New Segment'),
+    params: normalizeEffectParams(block.params),
+  };
+}
+
+function normalizeTimeline(blocks: Partial<TimelineBlock>[]): TimelineBlock[] {
+  return blocks
+    .map((block, index) => normalizeTimelineBlock(block, index))
+    .sort((a, b) => a.startTime - b.startTime || a.lane.localeCompare(b.lane));
+}
+
+function loadTimelineFromDisk(): TimelineBlock[] {
+  if (!fs.existsSync(SHOW_FILE)) {
+    return normalizeTimeline(SHOW_TIMELINE);
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(SHOW_FILE, 'utf8'));
+    const blocks = Array.isArray(parsed) ? parsed : parsed.blocks;
+    if (!Array.isArray(blocks)) {
+      throw new Error('show.json must contain a blocks array');
+    }
+    console.log('Loaded show timeline from show.json');
+    return normalizeTimeline(blocks);
+  } catch (e) {
+    console.error('Failed to load show.json, using default timeline:', e);
+    return normalizeTimeline(SHOW_TIMELINE);
+  }
+}
+
+function saveTimelineToDisk(blocks: TimelineBlock[]) {
+  fs.writeFileSync(SHOW_FILE, JSON.stringify({ duration: SHOW_DURATION_SECONDS, blocks }, null, 2), 'utf8');
+}
 
 interface LyricCue {
   startTime: number;
@@ -150,27 +222,35 @@ const REFRAIN_LYRICS_END = 39.1;
 const FIRST_HEY_START = 9.2;
 const SHOW_END = 45.0;
 
-let timelineBlocks: TimelineBlock[] = [
-  { id: '16', lane: 'wall', startTime: 0, endTime: 3.0, type: 'laser_sweeps', name: 'Tanzschein Laser Sweeps' },
-  { id: '17', lane: 'lyres', startTime: 0, endTime: 3.0, type: 'lyre_buildup_strobe', name: 'Lyres Strobe Crescendo' },
-  { id: '18', lane: 'static', startTime: 0, endTime: 3.0, type: 'static_dimmer_rise', name: 'Spot Dimmer Rise' },
- 
-  { id: '19', lane: 'wall', startTime: 3.0, endTime: 26.0, type: 'reactive_drop', name: 'Tanzschein Chorus Drop' },
-  { id: '20', lane: 'lyres', startTime: 3.0, endTime: 26.0, type: 'lyre_drop_trap', name: 'Lyres Mirror Trap Chases' },
-  { id: '21', lane: 'static', startTime: 3.0, endTime: 26.0, type: 'static_drop_strobe', name: 'Spot Strobe Drop' },
+function hexToRgb(hex: string): [number, number, number] {
+  const normalized = /^#[0-9a-f]{6}$/i.test(hex) ? hex : DEFAULT_EFFECT_PARAMS.color;
+  return [
+    parseInt(normalized.slice(1, 3), 16),
+    parseInt(normalized.slice(3, 5), 16),
+    parseInt(normalized.slice(5, 7), 16),
+  ];
+}
 
-  { id: '25', lane: 'wall', startTime: 26.0, endTime: 32.0, type: 'quadrant_flashes', name: 'Quadrant Controller Flash' },
-  { id: '26', lane: 'lyres', startTime: 26.0, endTime: 32.0, type: 'lyre_circle_color', name: 'Lyres Color Circular' },
-  { id: '27', lane: 'static', startTime: 26.0, endTime: 32.0, type: 'static_snare_flash', name: 'Spot Magenta Snare Flash' },
+function applyEffectParams(r: number, g: number, b: number, time: number, params?: EffectParams): [number, number, number] {
+  const normalized = normalizeEffectParams(params);
+  if (normalized.strobe > 0) {
+    const flashesPerSecond = 3 + normalized.strobe * 27;
+    if (Math.floor(time * flashesPerSecond) % 2 === 1) {
+      return [0, 0, 0];
+    }
+  }
 
-  { id: '28', lane: 'wall', startTime: 32.0, endTime: 40.0, type: 'laser_sweeps', name: 'Tanzschein Laser Sweeps 2' },
-  { id: '29', lane: 'lyres', startTime: 32.0, endTime: 40.0, type: 'lyre_buildup_strobe', name: 'Lyres Strobe Crescendo 2' },
-  { id: '30', lane: 'static', startTime: 32.0, endTime: 40.0, type: 'static_dimmer_rise', name: 'Spot Dimmer Rise 2' },
+  const [tr, tg, tb] = hexToRgb(normalized.color);
+  return [
+    Math.round(Math.min(255, r * normalized.intensity * (tr / 255))),
+    Math.round(Math.min(255, g * normalized.intensity * (tg / 255))),
+    Math.round(Math.min(255, b * normalized.intensity * (tb / 255))),
+  ];
+}
 
-  { id: '31', lane: 'wall', startTime: 40.0, endTime: 45.0, type: 'reactive_drop', name: 'Tanzschein Chorus Drop 2' },
-  { id: '32', lane: 'lyres', startTime: 40.0, endTime: 45.0, type: 'lyre_drop_trap', name: 'Lyres Mirror Trap Chases 2' },
-  { id: '33', lane: 'static', startTime: 40.0, endTime: 45.0, type: 'static_drop_strobe', name: 'Spot Strobe Drop 2' }
-];
+function getEffectTime(time: number, params?: EffectParams): number {
+  return time * normalizeEffectParams(params).speed;
+}
 
 // Playback state
 let isPlaying = false;
@@ -178,6 +258,8 @@ let playbackTime = 0;
 let playbackStartRealTime = 0;
 let routeInterval: NodeJS.Timeout | null = null;
 let activeOverride: string | null = null;
+let activePreviewBlock: TimelineBlock | null = null;
+let previewStartRealTime = 0;
 let detectedBeats: number[] = [];
 
 // Telemetry Stats
@@ -229,7 +311,7 @@ function startShowFromBeginning() {
 
 // 40Hz Main Loop Manager
 function updateRouterState() {
-  const needsLoop = isPlaying || activeOverride !== null || activeTestPattern !== null || activeImageFrame !== null;
+  const needsLoop = isPlaying || activeOverride !== null || activeTestPattern !== null || activeImageFrame !== null || activePreviewBlock !== null;
 
   if (needsLoop) {
     if (!routeInterval) {
@@ -252,7 +334,14 @@ function updateRouterState() {
         }
 
         // 2. Evaluate active blocks & generate DMX values
-        if (activeImageFrame) {
+        if (activePreviewBlock) {
+          const duration = Math.max(0.1, activePreviewBlock.endTime - activePreviewBlock.startTime);
+          const previewElapsed = ((Date.now() - previewStartRealTime) / 1000) % duration;
+          playbackTime = activePreviewBlock.startTime + previewElapsed;
+          evaluateWallBlock(activePreviewBlock.lane === 'wall' ? activePreviewBlock.type : 'black', playbackTime, isAudioImpact, activePreviewBlock.params);
+          evaluateLyresBlock(activePreviewBlock.lane === 'lyres' ? activePreviewBlock.type : 'black', playbackTime, isAudioImpact, activePreviewBlock.params);
+          evaluateStaticBlock(activePreviewBlock.lane === 'static' ? activePreviewBlock.type : 'static_off', playbackTime, isAudioImpact, activePreviewBlock.params);
+        } else if (activeImageFrame) {
           evaluateImageFrame(activeImageFrame);
         } else if (activeTestPattern) {
           if (activeTestPattern.type === 'controller') {
@@ -285,15 +374,15 @@ function updateRouterState() {
           
           // Evaluate wall block
           const wallBlock = activeBlocks.find(b => b.lane === 'wall');
-          evaluateWallBlock(wallBlock ? wallBlock.type : 'black', playbackTime, isAudioImpact);
+          evaluateWallBlock(wallBlock ? wallBlock.type : 'black', playbackTime, isAudioImpact, wallBlock?.params);
 
           // Evaluate DMX Lyres block
           const lyresBlock = activeBlocks.find(b => b.lane === 'lyres');
-          evaluateLyresBlock(lyresBlock ? lyresBlock.type : 'black', playbackTime, isAudioImpact);
+          evaluateLyresBlock(lyresBlock ? lyresBlock.type : 'black', playbackTime, isAudioImpact, lyresBlock?.params);
 
           // Evaluate Static Spotlight block
           const staticBlock = activeBlocks.find(b => b.lane === 'static');
-          evaluateStaticBlock(staticBlock ? staticBlock.type : 'static_off', playbackTime, isAudioImpact);
+          evaluateStaticBlock(staticBlock ? staticBlock.type : 'static_off', playbackTime, isAudioImpact, staticBlock?.params);
         } else {
           // If the show is paused/stopped, output black background and let overrides apply on top
           evaluateWallBlock('black', playbackTime, isAudioImpact);
@@ -346,7 +435,8 @@ function updateRouterState() {
 
 // Visual generators running fully on backend
 
-function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = false) {
+function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = false, params?: EffectParams) {
+  time = getEffectTime(time, params);
   const adjustedTime = time + AUDIO_OFFSET;
   const beatIdx = Math.floor(adjustedTime / BEAT_DURATION);
   const beatProgress = (adjustedTime % BEAT_DURATION) / BEAT_DURATION;
@@ -515,8 +605,6 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
         } else {
           const dx = x - 64;
           const dy = y - 64;
-          const dist = Math.sqrt(dx*dx + dy*dy);
-          
           let progress = 0;
           if (time < 3.0) {
             progress = Math.max(0, Math.min(1.0, (time + 4.3) / 7.3));
@@ -670,6 +758,8 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
         }
       }
 
+      [r, g, b] = applyEffectParams(r, g, b, time, params);
+
       const lyricOverlay = getFinalLyricOverlayPixel(time, x, y, beatIdx);
       if (lyricOverlay) {
         r = lyricOverlay.r;
@@ -686,7 +776,8 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
   });
 }
 
-function evaluateLyresBlock(type: string, time: number, isAudioImpact: boolean = false) {
+function evaluateLyresBlock(type: string, time: number, isAudioImpact: boolean = false, params?: EffectParams) {
+  time = getEffectTime(time, params);
   const adjustedTime = time + AUDIO_OFFSET;
   const beatIdx = Math.floor(adjustedTime / BEAT_DURATION);
   const beatProgress = (adjustedTime % BEAT_DURATION) / BEAT_DURATION;
@@ -765,6 +856,20 @@ function evaluateLyresBlock(type: string, time: number, isAudioImpact: boolean =
       strobe = Math.max(strobe, 245);
     }
 
+    const normalizedParams = normalizeEffectParams(params);
+    const [tr, tg, tb] = hexToRgb(normalizedParams.color);
+    dimmer = Math.round(Math.min(255, dimmer * normalizedParams.intensity));
+    strobe = Math.max(strobe, Math.round(normalizedParams.strobe * 255));
+    if (normalizedParams.color !== DEFAULT_EFFECT_PARAMS.color) {
+      const dominant = Math.max(tr, tg, tb);
+      if (dominant === tr && dominant === tg) colorCh = 145;
+      else if (dominant === tr && dominant === tb) colorCh = 165;
+      else if (dominant === tg && dominant === tb) colorCh = 185;
+      else if (dominant === tr) colorCh = 45;
+      else if (dominant === tg) colorCh = 75;
+      else if (dominant === tb) colorCh = 105;
+    }
+
     // Apply global visual fade scale (1.5s fade-in/out)
     let fadeScale = 1.0;
     if (time < 1.5) {
@@ -787,7 +892,8 @@ function evaluateLyresBlock(type: string, time: number, isAudioImpact: boolean =
   }
 }
 
-function evaluateStaticBlock(type: string, time: number, isAudioImpact: boolean = false) {
+function evaluateStaticBlock(type: string, time: number, isAudioImpact: boolean = false, params?: EffectParams) {
+  time = getEffectTime(time, params);
   const adjustedTime = time + AUDIO_OFFSET;
   const beatIdx = Math.floor(adjustedTime / BEAT_DURATION);
   const beatProgress = (adjustedTime % BEAT_DURATION) / BEAT_DURATION;
@@ -846,6 +952,9 @@ function evaluateStaticBlock(type: string, time: number, isAudioImpact: boolean 
     w = 255; // White blast!
   }
 
+  [r, g, b] = applyEffectParams(r, g, b, time, params);
+  w = Math.round(Math.min(255, w * normalizeEffectParams(params).intensity));
+
   // Write values to entity IDs 33001 to 33004
   const ids = [33001, 33002, 33003, 33004];
 
@@ -879,7 +988,7 @@ function getSingerPixelColor(
   y: number,
   time: number,
   beatProgress: number,
-  beatIdx: number,
+  _beatIdx: number,
   shiftY: number = 6,
   cropMinY: number | null = null
 ): { r: number, g: number, b: number } | null {
@@ -1043,7 +1152,7 @@ function drawCosmoSingerIntro(x: number, y: number, time: number, beatProgress: 
   return { r, g, b };
 }
 
-function drawCharacterMask(type: string, x: number, y: number, time: number, beatProgress: number) {
+function drawCharacterMask(type: string, x: number, y: number, _time: number, beatProgress: number) {
   let r = 0, g = 0, b = 0;
   
   const dx = x - 64;
@@ -1270,35 +1379,6 @@ function getReadableScale(lines: readonly string[], preferredScale: number): num
   return 1;
 }
 
-function isPixelInCenteredLyric(lines: readonly string[], x: number, y: number, preferredScale: number, elapsed: number = 1): boolean {
-  const scale = getReadableScale(lines, preferredScale);
-  const spacingWidth = 7;
-  const fontWidth = spacingWidth * scale;
-  const entrance = Math.max(0, Math.min(1, elapsed / 0.22));
-  const yOffset = Math.round((1 - entrance) * -7);
-  const ySlots = lines.length === 1
-    ? [scale >= 3 ? 75 : scale === 2 ? 67 : 65]
-    : scale >= 3
-      ? [88, 62]
-      : scale === 2
-        ? [76, 58]
-        : [72, 61];
-
-  return lines.some((line, idx) => {
-    const startX = 64 - Math.round((line.length * fontWidth) / 2);
-    const startY = (ySlots[idx] ?? ySlots[0]) + yOffset;
-    const inText = isPixelInText(line, x, y, startX, startY, scale, spacingWidth);
-    if (!inText) return false;
-
-    if (entrance < 1) {
-      const revealNoise = ((x * 17 + y * 31) % 100) / 100;
-      return revealNoise <= entrance;
-    }
-
-    return true;
-  });
-}
-
 function getFinalLyricOverlayPixel(time: number, x: number, y: number, beatIdx: number): { r: number; g: number; b: number } | null {
   const cue = getTextLyricCueAtTime(time);
   if (!cue) return null;
@@ -1506,9 +1586,9 @@ function getWallDimensions() {
 function evaluateImageFrame(frame: { width: number; height: number; rgba: Uint8Array }) {
   const { width: visibleWidth, height: visibleHeight } = getWallDimensions();
 
-  for (let physicalX = 0; physicalX < LED_WALL_WIDTH; physicalX++) {
-    for (let physicalY = 0; physicalY < LED_WALL_HEIGHT; physicalY++) {
-      const id = getEntityIdFromGrid(physicalX, LED_WALL_HEIGHT - 1 - physicalY);
+  for (let physicalX = 0; physicalX < visibleWidth; physicalX++) {
+    for (let physicalY = 0; physicalY < visibleHeight; physicalY++) {
+      const id = getWallEntityId(physicalX, visibleHeight - 1 - physicalY);
       const target = activeConfig.entityMap[id];
       if (!target) continue;
 
@@ -1652,6 +1732,7 @@ wss.on('connection', (ws) => {
         console.log(`[Audio] Received ${detectedBeats.length} beat timestamps from client. First 5 beats: ${JSON.stringify(detectedBeats.slice(0, 5))}`);
         broadcastToClients({ type: 'log', message: `Synchronized ${detectedBeats.length} beat triggers with server.` });
       } else if (msg.type === 'play') {
+        activePreviewBlock = null;
         activeTestPattern = null;
         activeImageFrame = null;
         isPlaying = true;
@@ -1661,12 +1742,14 @@ wss.on('connection', (ws) => {
         startShowFromBeginning();
         broadcastToClients({ type: 'log', message: 'Final demo mode started from 0.00s.' });
       } else if (msg.type === 'stop') {
+        activePreviewBlock = null;
         activeTestPattern = null;
         activeImageFrame = null;
         isPlaying = false;
         playbackTime = 0;
         updateRouterState();
       } else if (msg.type === 'blackout') {
+        activePreviewBlock = null;
         activeTestPattern = null;
         activeImageFrame = null;
         isPlaying = false;
@@ -1674,6 +1757,7 @@ wss.on('connection', (ws) => {
         activeOverride = null;
         updateRouterState();
       } else if (msg.type === 'override') {
+        activePreviewBlock = null;
         activeTestPattern = null;
         activeImageFrame = null;
         activeOverride = msg.key;
@@ -1681,6 +1765,7 @@ wss.on('connection', (ws) => {
         updateRouterState();
         console.log(`[Override] After updateRouterState: loopRunning=${routeInterval !== null}`);
       } else if (msg.type === 'test-controller') {
+        activePreviewBlock = null;
         activeImageFrame = null;
         const { controllerIdx, color } = msg;
         if (activeTestPattern && activeTestPattern.type === 'controller' && activeTestPattern.controllerIdx === controllerIdx) {
@@ -1698,6 +1783,7 @@ wss.on('connection', (ws) => {
           broadcastToClients({ type: 'log', message: `Streaming test pattern to ${ctrl?.ip || 'unknown'}` });
         }
       } else if (msg.type === 'test-all') {
+        activePreviewBlock = null;
         activeImageFrame = null;
         if (activeTestPattern && activeTestPattern.type === 'all') {
           // Toggle off
@@ -1712,6 +1798,18 @@ wss.on('connection', (ws) => {
           updateRouterState();
           broadcastToClients({ type: 'log', message: 'Streaming test pattern to ALL controllers (R/G/B/Y).' });
         }
+      } else if (msg.type === 'preview-block') {
+        activeTestPattern = null;
+        activeOverride = null;
+        isPlaying = false;
+        activePreviewBlock = normalizeTimelineBlock(msg.block, 0);
+        previewStartRealTime = Date.now();
+        updateRouterState();
+        broadcastToClients({ type: 'log', message: `Previewing ${activePreviewBlock.name}.` });
+      } else if (msg.type === 'preview-stop') {
+        activePreviewBlock = null;
+        updateRouterState();
+        broadcastToClients({ type: 'log', message: 'Segment preview stopped.' });
       }
     } catch (e) {
       console.error('Error handling WebSocket message:', e);
@@ -1747,6 +1845,83 @@ app.post('/api/config', (req, res) => {
   }
 });
 
+app.post('/api/config/regenerate', (req, res) => {
+  try {
+    const body = req.body as {
+      ledWall?: Partial<LedWallConfig>;
+      fixtures?: Partial<FixtureConfig>;
+      controllerIps?: string[];
+    };
+    const currentIps = activeConfig.controllers.map((ctrl) => ctrl.ip);
+    const nextConfig = buildConfigFromHardware(
+      body.ledWall || activeConfig.ledWall,
+      body.fixtures || activeConfig.fixtures,
+      body.controllerIps || currentIps,
+    );
+
+    activeConfig = normalizeRouterConfig(nextConfig);
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(activeConfig, null, 2), 'utf8');
+    universeBuffers.clear();
+    dirtyUniverses.clear();
+    rebuildUniverseRouteMap();
+    broadcastToClients({ type: 'config', data: activeConfig });
+
+    res.json({
+      success: true,
+      message: 'Physical configuration regenerated.',
+      config: activeConfig,
+      summary: {
+        controllers: activeConfig.controllers.length,
+        ledWallEntities: activeConfig.ledWall.strips * activeConfig.ledWall.ledsPerStrip,
+        totalEntities: Object.keys(activeConfig.entityMap).length,
+      },
+    });
+  } catch (e) {
+    res.status(400).json({ success: false, error: (e as Error).message });
+  }
+});
+
+app.get('/api/show', (_req, res) => {
+  res.json({
+    duration: SHOW_DURATION_SECONDS,
+    blocks: timelineBlocks,
+  });
+});
+
+app.post('/api/show', (req, res) => {
+  try {
+    const blocks = Array.isArray(req.body) ? req.body : req.body?.blocks;
+    if (!Array.isArray(blocks)) {
+      res.status(400).json({ success: false, error: 'Expected a blocks array.' });
+      return;
+    }
+
+    timelineBlocks = normalizeTimeline(blocks);
+    saveTimelineToDisk(timelineBlocks);
+    broadcastToClients({ type: 'timeline', data: timelineBlocks });
+
+    res.json({
+      success: true,
+      message: 'Show timeline saved.',
+      duration: SHOW_DURATION_SECONDS,
+      blocks: timelineBlocks,
+    });
+  } catch (e) {
+    res.status(400).json({ success: false, error: (e as Error).message });
+  }
+});
+
+app.post('/api/show/reset', (_req, res) => {
+  try {
+    timelineBlocks = normalizeTimeline(SHOW_TIMELINE);
+    saveTimelineToDisk(timelineBlocks);
+    broadcastToClients({ type: 'timeline', data: timelineBlocks });
+    res.json({ success: true, duration: SHOW_DURATION_SECONDS, blocks: timelineBlocks });
+  } catch (e) {
+    res.status(500).json({ success: false, error: (e as Error).message });
+  }
+});
+
 app.post('/api/image-wall', (req, res) => {
   try {
     const { width, height, rgbaBase64 } = req.body as {
@@ -1756,10 +1931,12 @@ app.post('/api/image-wall', (req, res) => {
     };
 
     if (!width || !height || !rgbaBase64) {
-      return res.status(400).json({ success: false, error: 'Missing width, height, or rgbaBase64.' });
+      res.status(400).json({ success: false, error: 'Missing width, height, or rgbaBase64.' });
+      return;
     }
 
     const rgba = new Uint8Array(Buffer.from(rgbaBase64, 'base64'));
+    activePreviewBlock = null;
     activeTestPattern = null;
     activeImageFrame = { width, height, rgba };
     isPlaying = false;
