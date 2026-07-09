@@ -13,6 +13,7 @@ import {
   generateDefaultConfig,
   getEntityIdFromGridWithConfig,
   normalizeRouterConfig,
+  validateRouterConfig,
   RouterConfig,
   type FixtureConfig,
   type LedWallConfig,
@@ -1946,7 +1947,15 @@ app.get('/api/config', (_req, res) => {
 app.post('/api/config', (req, res) => {
   try {
     const newConfig = req.body as RouterConfig;
-    activeConfig = normalizeRouterConfig(newConfig);
+    const normalizedConfig = normalizeRouterConfig(newConfig);
+    const health = validateRouterConfig(normalizedConfig);
+    const errors = health.filter((item) => item.level === 'error');
+    if (errors.length > 0) {
+      res.status(400).json({ success: false, error: 'Invalid router configuration.', health });
+      return;
+    }
+
+    activeConfig = normalizedConfig;
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(activeConfig, null, 2), 'utf8');
     
     universeBuffers.clear();
@@ -1976,7 +1985,15 @@ app.post('/api/config/regenerate', (req, res) => {
       body.controllerIps || currentIps,
     );
 
-    activeConfig = normalizeRouterConfig(nextConfig);
+    const normalizedConfig = normalizeRouterConfig(nextConfig);
+    const health = validateRouterConfig(normalizedConfig);
+    const errors = health.filter((item) => item.level === 'error');
+    if (errors.length > 0) {
+      res.status(400).json({ success: false, error: 'Generated router configuration is invalid.', health });
+      return;
+    }
+
+    activeConfig = normalizedConfig;
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(activeConfig, null, 2), 'utf8');
     universeBuffers.clear();
     dirtyUniverses.clear();

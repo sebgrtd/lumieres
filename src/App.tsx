@@ -1,10 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Play, Pause, Square, Radio, Cpu, Settings, Activity, Trash2, Plus, Volume2, ImagePlus } from 'lucide-react';
 import { Visualizer } from './components/Visualizer.tsx';
 import { synthInstance } from './components/AudioEngine.ts';
 import { analyzeAudioBeats } from './components/AudioAnalyzer.ts';
 import { SHOW_DURATION_SECONDS, SHOW_TIMELINE, type EffectParams, type TimelineBlock } from './timeline/showTimeline.ts';
 import { ImageStudio } from './components/ImageStudio.tsx';
+import { validateRouterConfig, type ConfigHealthItem, type RouterConfig } from './router/mapping.ts';
 
 const LANE_LABELS: Record<TimelineBlock['lane'], string> = {
   wall: 'LED Wall Lane',
@@ -56,6 +57,12 @@ const getEffectParams = (block: TimelineBlock): EffectParams => ({
   ...DEFAULT_EFFECT_PARAMS,
   ...(block.params || {}),
 });
+
+const summarizeConfigHealth = (items: ConfigHealthItem[]) => {
+  const errors = items.filter((item) => item.level === 'error').length;
+  const warnings = items.filter((item) => item.level === 'warning').length;
+  return { errors, warnings };
+};
 
 interface DmxMonitorState {
   generatedAt: number;
@@ -147,6 +154,10 @@ export default function App() {
   const [selectedUniverseKey, setSelectedUniverseKey] = useState('');
   const [inspectEntityId, setInspectEntityId] = useState('100');
   const [ehubMonitor, setEhubMonitor] = useState<EHubMonitorState | null>(null);
+  const configHealth = useMemo<ConfigHealthItem[]>(() => (
+    config ? validateRouterConfig(config as RouterConfig) : [{ level: 'warning', message: 'No configuration loaded yet.' }]
+  ), [config]);
+  const configHealthSummary = useMemo(() => summarizeConfigHealth(configHealth), [configHealth]);
 
   const addLog = (msg: string) => {
     setConsoleLogs((prev) => [ `[${new Date().toLocaleTimeString()}] ${msg}`, ...prev.slice(0, 15) ]);
@@ -585,6 +596,12 @@ export default function App() {
   };
 
   const saveConfig = async () => {
+    const errors = configHealth.filter((item) => item.level === 'error');
+    if (errors.length > 0) {
+      addLog(`Config save blocked: ${errors.length} error(s) must be fixed.`);
+      return;
+    }
+
     try {
       const res = await fetch('/api/config', {
         method: 'POST',
@@ -595,7 +612,8 @@ export default function App() {
       if (data.success) {
         addLog('Configuration successfully saved to backend config.json');
       } else {
-        addLog(`Error saving config: ${data.error}`);
+        const health = Array.isArray(data.health) ? data.health as ConfigHealthItem[] : [];
+        addLog(`Error saving config: ${data.error}${health.length ? ` (${health.filter((item) => item.level === 'error').length} validation error(s))` : ''}`);
       }
     } catch (e) {
       addLog(`Failed to connect to backend: ${(e as Error).message}`);
@@ -647,6 +665,12 @@ export default function App() {
   };
 
   const regeneratePhysicalMapping = async () => {
+    const errors = configHealth.filter((item) => item.level === 'error');
+    if (errors.length > 0) {
+      addLog(`Mapping regeneration blocked: ${errors.length} config error(s) must be fixed.`);
+      return;
+    }
+
     try {
       const res = await fetch('/api/config/regenerate', {
         method: 'POST',
@@ -1659,6 +1683,40 @@ export default function App() {
 
         {activeTab === 'config' && config && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', flex: 1 }}>
+            <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <div>
+                  <h3 style={{ fontSize: '1.1rem' }}>Config Health</h3>
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', marginTop: '4px' }}>
+                    Validation du setup physique: IP, univers, canaux DMX, capacitÃ© et mapping.
+                  </p>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  {configHealthSummary.errors > 0 && <span className="badge badge-red">{configHealthSummary.errors} errors</span>}
+                  {configHealthSummary.warnings > 0 && <span className="badge badge-gold">{configHealthSummary.warnings} warnings</span>}
+                  {configHealthSummary.errors === 0 && configHealthSummary.warnings === 0 && <span className="badge badge-cyan">ready</span>}
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '10px' }}>
+                {configHealth.map((item, index) => {
+                  const borderColor = item.level === 'error' ? '#ef4444' : item.level === 'warning' ? 'var(--color-gold)' : 'var(--color-cyan)';
+                  const badgeClass = item.level === 'error' ? 'badge-red' : item.level === 'warning' ? 'badge-gold' : 'badge-cyan';
+                  return (
+                    <div key={`${item.level}-${item.message}-${index}`} style={{ backgroundColor: 'var(--bg-base)', border: `1px solid ${borderColor}`, borderRadius: '8px', padding: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <span style={{ fontSize: '0.86rem', fontWeight: 600 }}>{item.message}</span>
+                        <span className={`badge ${badgeClass}`}>{item.level}</span>
+                      </div>
+                      {item.detail && (
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.76rem', fontFamily: 'JetBrains Mono' }}>{item.detail}</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
             <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                 <div>
