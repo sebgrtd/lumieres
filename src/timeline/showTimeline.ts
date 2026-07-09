@@ -1,3 +1,10 @@
+export interface EffectParams {
+  intensity: number;
+  color: string;
+  speed: number;
+  strobe: number;
+}
+
 export interface TimelineBlock {
   id: string;
   lane: 'wall' | 'lyres' | 'static';
@@ -5,6 +12,7 @@ export interface TimelineBlock {
   endTime: number;
   type: string;
   name: string;
+  params?: EffectParams;
 }
 
 export const SHOW_DURATION_SECONDS = 45;

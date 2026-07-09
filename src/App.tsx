@@ -3,7 +3,7 @@ import { Play, Pause, Square, Radio, Cpu, Settings, Activity, Trash2, Plus, Volu
 import { Visualizer } from './components/Visualizer.tsx';
 import { synthInstance } from './components/AudioEngine.ts';
 import { analyzeAudioBeats } from './components/AudioAnalyzer.ts';
-import { SHOW_DURATION_SECONDS, SHOW_TIMELINE, type TimelineBlock } from './timeline/showTimeline.ts';
+import { SHOW_DURATION_SECONDS, SHOW_TIMELINE, type EffectParams, type TimelineBlock } from './timeline/showTimeline.ts';
 
 const LANE_LABELS: Record<TimelineBlock['lane'], string> = {
   wall: 'LED Wall Lane',
@@ -44,6 +44,18 @@ const EFFECT_OPTIONS: Record<TimelineBlock['lane'], { value: string; label: stri
   ],
 };
 
+const DEFAULT_EFFECT_PARAMS: EffectParams = {
+  intensity: 1,
+  color: '#ffffff',
+  speed: 1,
+  strobe: 0,
+};
+
+const getEffectParams = (block: TimelineBlock): EffectParams => ({
+  ...DEFAULT_EFFECT_PARAMS,
+  ...(block.params || {}),
+});
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'timeline' | 'config'>('dashboard');
   const [wsConnected, setWsConnected] = useState(false);
@@ -78,6 +90,7 @@ export default function App() {
   const [showDirty, setShowDirty] = useState(false);
 
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
+  const [previewingBlockId, setPreviewingBlockId] = useState<string | null>(null);
   const [interactiveOverride, setInteractiveOverride] = useState<string | null>(null);
   const [frameState, setFrameState] = useState<Record<number, number[]>>({});
 
@@ -222,6 +235,14 @@ export default function App() {
     currentTimeRef.current = currentTime;
   }, [currentTime]);
 
+  useEffect(() => {
+    if (!previewingBlockId || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    const block = blocks.find((item) => item.id === previewingBlockId);
+    if (block) {
+      wsRef.current.send(JSON.stringify({ type: 'preview-block', block }));
+    }
+  }, [blocks, previewingBlockId]);
+
   // Sync Synthesizer with backend playback state
   useEffect(() => {
     if (isPlaying) {
@@ -233,6 +254,7 @@ export default function App() {
 
   const handlePlay = () => {
     blurAll();
+    setPreviewingBlockId(null);
     if (isPlaying) {
       setIsPlaying(false);
       addLog('Show paused.');
@@ -250,6 +272,7 @@ export default function App() {
 
   const handleStop = () => {
     blurAll();
+    setPreviewingBlockId(null);
     synthInstance.stop();
     setIsPlaying(false);
     setCurrentTime(0);
@@ -261,6 +284,7 @@ export default function App() {
 
   const handleBlackout = () => {
     blurAll();
+    setPreviewingBlockId(null);
     synthInstance.stop();
     setIsPlaying(false);
     setCurrentTime(0);
@@ -294,6 +318,40 @@ export default function App() {
     setShowDirty(true);
   };
 
+  const updateSelectedBlockParams = (patch: Partial<EffectParams>) => {
+    if (!selectedBlockId) return;
+
+    setBlocks((prev) => prev.map((block) => {
+      if (block.id !== selectedBlockId) return block;
+      return {
+        ...block,
+        params: {
+          ...getEffectParams(block),
+          ...patch,
+        },
+      };
+    }));
+    setShowDirty(true);
+  };
+
+  const previewSelectedBlock = (block: TimelineBlock) => {
+    blurAll();
+    if (previewingBlockId === block.id) {
+      setPreviewingBlockId(null);
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'preview-stop' }));
+      }
+      return;
+    }
+
+    setIsPlaying(false);
+    setPreviewingBlockId(block.id);
+    addLog(`Preview segment: ${block.name}`);
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'preview-block', block }));
+    }
+  };
+
   const addTimelineBlock = (lane: TimelineBlock['lane']) => {
     const defaultEffect = EFFECT_OPTIONS[lane][0];
     const startTime = Math.min(Math.max(0, currentTime), SHOW_DURATION_SECONDS - 1);
@@ -304,6 +362,7 @@ export default function App() {
       endTime: Number(Math.min(SHOW_DURATION_SECONDS, startTime + 2).toFixed(2)),
       type: defaultEffect.value,
       name: defaultEffect.label,
+      params: { ...DEFAULT_EFFECT_PARAMS },
     };
 
     setBlocks((prev) => sortTimelineBlocks([...prev, block]));
@@ -333,6 +392,10 @@ export default function App() {
   const deleteSelectedBlock = () => {
     if (!selectedBlockId) return;
     setBlocks((prev) => prev.filter((block) => block.id !== selectedBlockId));
+    if (previewingBlockId === selectedBlockId && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'preview-stop' }));
+    }
+    setPreviewingBlockId(null);
     setSelectedBlockId(null);
     setShowDirty(true);
   };
@@ -980,89 +1043,152 @@ export default function App() {
                 {(() => {
                   const block = blocks.find(b => b.id === selectedBlockId);
                   if (!block) return null;
+                  const params = getEffectParams(block);
                   return (
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                        <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Block Name</label>
-                        <input
-                          type="text"
-                          value={block.name}
-                          onChange={(event) => updateSelectedBlock({ name: event.target.value })}
-                        />
+                    <>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                          <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Block Name</label>
+                          <input
+                            type="text"
+                            value={block.name}
+                            onChange={(event) => updateSelectedBlock({ name: event.target.value })}
+                          />
 
-                        <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Target Lane</label>
-                        <select
-                          value={block.lane}
-                          onChange={(event) => {
-                            const lane = event.target.value as TimelineBlock['lane'];
-                            updateSelectedBlock({
-                              lane,
-                              type: EFFECT_OPTIONS[lane][0].value,
-                              name: EFFECT_OPTIONS[lane][0].label,
-                            });
-                          }}
-                        >
-                          <option value="wall">LED Wall</option>
-                          <option value="lyres">Moving Heads</option>
-                          <option value="static">Static Spotlight</option>
-                        </select>
+                          <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Target Lane</label>
+                          <select
+                            value={block.lane}
+                            onChange={(event) => {
+                              const lane = event.target.value as TimelineBlock['lane'];
+                              updateSelectedBlock({
+                                lane,
+                                type: EFFECT_OPTIONS[lane][0].value,
+                                name: EFFECT_OPTIONS[lane][0].label,
+                                params: { ...DEFAULT_EFFECT_PARAMS },
+                              });
+                            }}
+                          >
+                            <option value="wall">LED Wall</option>
+                            <option value="lyres">Moving Heads</option>
+                            <option value="static">Static Spotlight</option>
+                          </select>
 
-                        <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Animation Pattern</label>
-                        <select
-                          value={block.type}
-                          onChange={(event) => {
-                            const selectedEffect = EFFECT_OPTIONS[block.lane].find((effect) => effect.value === event.target.value);
-                            updateSelectedBlock({
-                              type: event.target.value,
-                              name: selectedEffect?.label || block.name,
-                            });
-                          }}
-                        >
-                          {EFFECT_OPTIONS[block.lane].map((effect) => (
-                            <option key={effect.value} value={effect.value}>{effect.label}</option>
-                          ))}
-                        </select>
+                          <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Animation Pattern</label>
+                          <select
+                            value={block.type}
+                            onChange={(event) => {
+                              const selectedEffect = EFFECT_OPTIONS[block.lane].find((effect) => effect.value === event.target.value);
+                              updateSelectedBlock({
+                                type: event.target.value,
+                                name: selectedEffect?.label || block.name,
+                              });
+                            }}
+                          >
+                            {EFFECT_OPTIONS[block.lane].map((effect) => (
+                              <option key={effect.value} value={effect.value}>{effect.label}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                          <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Start Time (seconds)</label>
+                          <input
+                            type="number"
+                            step={0.1}
+                            min={0}
+                            max={SHOW_DURATION_SECONDS}
+                            value={block.startTime}
+                            onChange={(event) => updateSelectedBlock({ startTime: Number(event.target.value) })}
+                          />
+
+                          <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>End Time (seconds)</label>
+                          <input
+                            type="number"
+                            step={0.1}
+                            min={0.1}
+                            max={SHOW_DURATION_SECONDS}
+                            value={block.endTime}
+                            onChange={(event) => updateSelectedBlock({ endTime: Number(event.target.value) })}
+                          />
+
+                          <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Quick Position</label>
+                          <input
+                            type="range"
+                            min={0}
+                            max={SHOW_DURATION_SECONDS}
+                            step={0.1}
+                            value={block.startTime}
+                            onChange={(event) => {
+                              const duration = block.endTime - block.startTime;
+                              const startTime = Number(event.target.value);
+                              updateSelectedBlock({
+                                startTime,
+                                endTime: Math.min(SHOW_DURATION_SECONDS, startTime + duration),
+                              });
+                            }}
+                          />
+                        </div>
                       </div>
 
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                        <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Start Time (seconds)</label>
-                        <input
-                          type="number"
-                          step={0.1}
-                          min={0}
-                          max={SHOW_DURATION_SECONDS}
-                          value={block.startTime}
-                          onChange={(event) => updateSelectedBlock({ startTime: Number(event.target.value) })}
-                        />
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', padding: '14px', backgroundColor: 'var(--bg-base)', borderRadius: '8px', border: '1px solid var(--border-muted)' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '12px' }}>
+                          <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                            Color
+                            <input
+                              type="color"
+                              value={params.color}
+                              onChange={(event) => updateSelectedBlockParams({ color: event.target.value })}
+                              style={{ height: '38px', padding: '3px' }}
+                            />
+                          </label>
+                          <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                            Intensity {Math.round(params.intensity * 100)}%
+                            <input
+                              type="range"
+                              min={0}
+                              max={1.5}
+                              step={0.05}
+                              value={params.intensity}
+                              onChange={(event) => updateSelectedBlockParams({ intensity: Number(event.target.value) })}
+                            />
+                          </label>
+                          <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                            Speed x{params.speed.toFixed(2)}
+                            <input
+                              type="range"
+                              min={0.25}
+                              max={3}
+                              step={0.05}
+                              value={params.speed}
+                              onChange={(event) => updateSelectedBlockParams({ speed: Number(event.target.value) })}
+                            />
+                          </label>
+                          <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                            Strobe {Math.round(params.strobe * 100)}%
+                            <input
+                              type="range"
+                              min={0}
+                              max={1}
+                              step={0.05}
+                              value={params.strobe}
+                              onChange={(event) => updateSelectedBlockParams({ strobe: Number(event.target.value) })}
+                            />
+                          </label>
+                        </div>
 
-                        <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>End Time (seconds)</label>
-                        <input
-                          type="number"
-                          step={0.1}
-                          min={0.1}
-                          max={SHOW_DURATION_SECONDS}
-                          value={block.endTime}
-                          onChange={(event) => updateSelectedBlock({ endTime: Number(event.target.value) })}
-                        />
-
-                        <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Quick Position</label>
-                        <input
-                          type="range"
-                          min={0}
-                          max={SHOW_DURATION_SECONDS}
-                          step={0.1}
-                          value={block.startTime}
-                          onChange={(event) => {
-                            const duration = block.endTime - block.startTime;
-                            const startTime = Number(event.target.value);
-                            updateSelectedBlock({
-                              startTime,
-                              endTime: Math.min(SHOW_DURATION_SECONDS, startTime + duration),
-                            });
-                          }}
-                        />
+                        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '12px' }}>
+                          <div style={{ height: '72px', borderRadius: '8px', border: '1px solid var(--border-accent)', background: `linear-gradient(135deg, ${params.color}, rgba(0,0,0,${Math.max(0, 1 - params.intensity)}))`, boxShadow: previewingBlockId === block.id ? `0 0 18px ${params.color}` : 'none' }} />
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center' }}>
+                            <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                              {block.lane.toUpperCase()} · {block.type} · {(block.endTime - block.startTime).toFixed(1)}s
+                            </div>
+                            <button className={previewingBlockId === block.id ? '' : 'secondary'} onClick={() => previewSelectedBlock(block)}>
+                              {previewingBlockId === block.id ? 'Stop Preview' : 'Preview Segment'}
+                            </button>
+                          </div>
+                        </div>
                       </div>
-                    </div>
+                    </>
                   );
                 })()}
               </div>

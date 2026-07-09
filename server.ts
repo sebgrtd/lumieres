@@ -17,7 +17,7 @@ import {
   type FixtureConfig,
   type LedWallConfig,
 } from './src/router/mapping.ts';
-import { SHOW_DURATION_SECONDS, SHOW_TIMELINE, type TimelineBlock } from './src/timeline/showTimeline.ts';
+import { SHOW_DURATION_SECONDS, SHOW_TIMELINE, type EffectParams, type TimelineBlock } from './src/timeline/showTimeline.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -118,8 +118,33 @@ rebuildUniverseRouteMap();
 const BPM = 130;
 const BEAT_DURATION = 60 / BPM; // ~0.4615s
 const AUDIO_OFFSET = 0.1; // adjust if audio start has delay
+const DEFAULT_EFFECT_PARAMS: EffectParams = {
+  intensity: 1,
+  color: '#ffffff',
+  speed: 1,
+  strobe: 0,
+};
 
 let timelineBlocks: TimelineBlock[] = loadTimelineFromDisk();
+
+function clampNumber(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function normalizeEffectParams(input?: Partial<EffectParams>): EffectParams {
+  const color = typeof input?.color === 'string' && /^#[0-9a-f]{6}$/i.test(input.color)
+    ? input.color
+    : DEFAULT_EFFECT_PARAMS.color;
+
+  return {
+    intensity: clampNumber(input?.intensity, DEFAULT_EFFECT_PARAMS.intensity, 0, 1.5),
+    color,
+    speed: clampNumber(input?.speed, DEFAULT_EFFECT_PARAMS.speed, 0.25, 3),
+    strobe: clampNumber(input?.strobe, DEFAULT_EFFECT_PARAMS.strobe, 0, 1),
+  };
+}
 
 function normalizeTimelineBlock(block: Partial<TimelineBlock>, index: number): TimelineBlock {
   const lane = block.lane === 'lyres' || block.lane === 'static' ? block.lane : 'wall';
@@ -133,6 +158,7 @@ function normalizeTimelineBlock(block: Partial<TimelineBlock>, index: number): T
     endTime: Number(endTime.toFixed(2)),
     type: String(block.type || (lane === 'static' ? 'static_off' : 'black')),
     name: String(block.name || 'New Segment'),
+    params: normalizeEffectParams(block.params),
   };
 }
 
@@ -165,12 +191,44 @@ function saveTimelineToDisk(blocks: TimelineBlock[]) {
   fs.writeFileSync(SHOW_FILE, JSON.stringify({ duration: SHOW_DURATION_SECONDS, blocks }, null, 2), 'utf8');
 }
 
+function hexToRgb(hex: string): [number, number, number] {
+  const normalized = /^#[0-9a-f]{6}$/i.test(hex) ? hex : DEFAULT_EFFECT_PARAMS.color;
+  return [
+    parseInt(normalized.slice(1, 3), 16),
+    parseInt(normalized.slice(3, 5), 16),
+    parseInt(normalized.slice(5, 7), 16),
+  ];
+}
+
+function applyEffectParams(r: number, g: number, b: number, time: number, params?: EffectParams): [number, number, number] {
+  const normalized = normalizeEffectParams(params);
+  if (normalized.strobe > 0) {
+    const flashesPerSecond = 3 + normalized.strobe * 27;
+    if (Math.floor(time * flashesPerSecond) % 2 === 1) {
+      return [0, 0, 0];
+    }
+  }
+
+  const [tr, tg, tb] = hexToRgb(normalized.color);
+  return [
+    Math.round(Math.min(255, r * normalized.intensity * (tr / 255))),
+    Math.round(Math.min(255, g * normalized.intensity * (tg / 255))),
+    Math.round(Math.min(255, b * normalized.intensity * (tb / 255))),
+  ];
+}
+
+function getEffectTime(time: number, params?: EffectParams): number {
+  return time * normalizeEffectParams(params).speed;
+}
+
 // Playback state
 let isPlaying = false;
 let playbackTime = 0;
 let playbackStartRealTime = 0;
 let routeInterval: NodeJS.Timeout | null = null;
 let activeOverride: string | null = null;
+let activePreviewBlock: TimelineBlock | null = null;
+let previewStartRealTime = 0;
 let detectedBeats: number[] = [];
 
 // Telemetry Stats
@@ -211,7 +269,7 @@ let activeTestPattern: { type: 'controller' | 'all'; controllerIdx?: number; col
 
 // 40Hz Main Loop Manager
 function updateRouterState() {
-  const needsLoop = isPlaying || activeOverride !== null || activeTestPattern !== null;
+  const needsLoop = isPlaying || activeOverride !== null || activeTestPattern !== null || activePreviewBlock !== null;
 
   if (needsLoop) {
     if (!routeInterval) {
@@ -234,7 +292,14 @@ function updateRouterState() {
         }
 
         // 2. Evaluate active blocks & generate DMX values
-        if (activeTestPattern) {
+        if (activePreviewBlock) {
+          const duration = Math.max(0.1, activePreviewBlock.endTime - activePreviewBlock.startTime);
+          const previewElapsed = ((Date.now() - previewStartRealTime) / 1000) % duration;
+          playbackTime = activePreviewBlock.startTime + previewElapsed;
+          evaluateWallBlock(activePreviewBlock.lane === 'wall' ? activePreviewBlock.type : 'black', playbackTime, isAudioImpact, activePreviewBlock.params);
+          evaluateLyresBlock(activePreviewBlock.lane === 'lyres' ? activePreviewBlock.type : 'black', playbackTime, isAudioImpact, activePreviewBlock.params);
+          evaluateStaticBlock(activePreviewBlock.lane === 'static' ? activePreviewBlock.type : 'static_off', playbackTime, isAudioImpact, activePreviewBlock.params);
+        } else if (activeTestPattern) {
           if (activeTestPattern.type === 'controller') {
             const ctrl = activeConfig.controllers[activeTestPattern.controllerIdx!];
             if (ctrl) {
@@ -265,15 +330,15 @@ function updateRouterState() {
           
           // Evaluate wall block
           const wallBlock = activeBlocks.find(b => b.lane === 'wall');
-          evaluateWallBlock(wallBlock ? wallBlock.type : 'black', playbackTime, isAudioImpact);
+          evaluateWallBlock(wallBlock ? wallBlock.type : 'black', playbackTime, isAudioImpact, wallBlock?.params);
 
           // Evaluate DMX Lyres block
           const lyresBlock = activeBlocks.find(b => b.lane === 'lyres');
-          evaluateLyresBlock(lyresBlock ? lyresBlock.type : 'black', playbackTime, isAudioImpact);
+          evaluateLyresBlock(lyresBlock ? lyresBlock.type : 'black', playbackTime, isAudioImpact, lyresBlock?.params);
 
           // Evaluate Static Spotlight block
           const staticBlock = activeBlocks.find(b => b.lane === 'static');
-          evaluateStaticBlock(staticBlock ? staticBlock.type : 'static_off', playbackTime, isAudioImpact);
+          evaluateStaticBlock(staticBlock ? staticBlock.type : 'static_off', playbackTime, isAudioImpact, staticBlock?.params);
         } else {
           // If the show is paused/stopped, output black background and let overrides apply on top
           evaluateWallBlock('black', playbackTime, isAudioImpact);
@@ -326,7 +391,8 @@ function updateRouterState() {
 
 // Visual generators running fully on backend
 
-function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = false) {
+function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = false, params?: EffectParams) {
+  time = getEffectTime(time, params);
   const adjustedTime = time + AUDIO_OFFSET;
   const beatIdx = Math.floor(adjustedTime / BEAT_DURATION);
   const beatProgress = (adjustedTime % BEAT_DURATION) / BEAT_DURATION;
@@ -600,6 +666,8 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
         }
       }
 
+      [r, g, b] = applyEffectParams(r, g, b, time, params);
+
       // Write directly to universe buffers
       const buf = getUniverseBuffer(target.ip, target.universe);
       buf[target.channel] = r;
@@ -609,7 +677,8 @@ function evaluateWallBlock(type: string, time: number, isAudioImpact: boolean = 
   });
 }
 
-function evaluateLyresBlock(type: string, time: number, isAudioImpact: boolean = false) {
+function evaluateLyresBlock(type: string, time: number, isAudioImpact: boolean = false, params?: EffectParams) {
+  time = getEffectTime(time, params);
   const adjustedTime = time + AUDIO_OFFSET;
   const beatIdx = Math.floor(adjustedTime / BEAT_DURATION);
   const beatProgress = (adjustedTime % BEAT_DURATION) / BEAT_DURATION;
@@ -683,6 +752,20 @@ function evaluateLyresBlock(type: string, time: number, isAudioImpact: boolean =
       strobe = Math.max(strobe, 245);
     }
 
+    const normalizedParams = normalizeEffectParams(params);
+    const [tr, tg, tb] = hexToRgb(normalizedParams.color);
+    dimmer = Math.round(Math.min(255, dimmer * normalizedParams.intensity));
+    strobe = Math.max(strobe, Math.round(normalizedParams.strobe * 255));
+    if (normalizedParams.color !== DEFAULT_EFFECT_PARAMS.color) {
+      const dominant = Math.max(tr, tg, tb);
+      if (dominant === tr && dominant === tg) colorCh = 145;
+      else if (dominant === tr && dominant === tb) colorCh = 165;
+      else if (dominant === tg && dominant === tb) colorCh = 185;
+      else if (dominant === tr) colorCh = 45;
+      else if (dominant === tg) colorCh = 75;
+      else if (dominant === tb) colorCh = 105;
+    }
+
     // Map channels to buffers
     const values = [pan, 0, tilt, 0, 0, dimmer, strobe, colorCh, 0, 0, 0, 0, 0];
     values.forEach((val, ch) => {
@@ -696,7 +779,8 @@ function evaluateLyresBlock(type: string, time: number, isAudioImpact: boolean =
   }
 }
 
-function evaluateStaticBlock(type: string, time: number, isAudioImpact: boolean = false) {
+function evaluateStaticBlock(type: string, time: number, isAudioImpact: boolean = false, params?: EffectParams) {
+  time = getEffectTime(time, params);
   const adjustedTime = time + AUDIO_OFFSET;
   const beatIdx = Math.floor(adjustedTime / BEAT_DURATION);
   const beatProgress = (adjustedTime % BEAT_DURATION) / BEAT_DURATION;
@@ -749,6 +833,9 @@ function evaluateStaticBlock(type: string, time: number, isAudioImpact: boolean 
   if (isAudioImpact && type !== 'static_off') {
     w = 255; // White blast!
   }
+
+  [r, g, b] = applyEffectParams(r, g, b, time, params);
+  w = Math.round(Math.min(255, w * normalizeEffectParams(params).intensity));
 
   // Write values to entity IDs 33001 to 33004
   const ids = [33001, 33002, 33003, 33004];
@@ -1290,28 +1377,33 @@ wss.on('connection', (ws) => {
         console.log(`[Audio] Received ${detectedBeats.length} beat timestamps from client. First 5 beats: ${JSON.stringify(detectedBeats.slice(0, 5))}`);
         broadcastToClients({ type: 'log', message: `Synchronized ${detectedBeats.length} beat triggers with server.` });
       } else if (msg.type === 'play') {
+        activePreviewBlock = null;
         activeTestPattern = null;
         isPlaying = true;
         playbackStartRealTime = Date.now() - playbackTime * 1000;
         updateRouterState();
       } else if (msg.type === 'stop') {
+        activePreviewBlock = null;
         activeTestPattern = null;
         isPlaying = false;
         playbackTime = 0;
         updateRouterState();
       } else if (msg.type === 'blackout') {
+        activePreviewBlock = null;
         activeTestPattern = null;
         isPlaying = false;
         playbackTime = 0;
         activeOverride = null;
         updateRouterState();
       } else if (msg.type === 'override') {
+        activePreviewBlock = null;
         activeTestPattern = null;
         activeOverride = msg.key;
         console.log(`[Override] ${msg.key ? 'ACTIVATED: ' + msg.key : 'RELEASED'} | isPlaying=${isPlaying} | loopRunning=${routeInterval !== null}`);
         updateRouterState();
         console.log(`[Override] After updateRouterState: loopRunning=${routeInterval !== null}`);
       } else if (msg.type === 'test-controller') {
+        activePreviewBlock = null;
         const { controllerIdx, color } = msg;
         if (activeTestPattern && activeTestPattern.type === 'controller' && activeTestPattern.controllerIdx === controllerIdx) {
           // Toggle off
@@ -1328,6 +1420,7 @@ wss.on('connection', (ws) => {
           broadcastToClients({ type: 'log', message: `Streaming test pattern to ${ctrl?.ip || 'unknown'}` });
         }
       } else if (msg.type === 'test-all') {
+        activePreviewBlock = null;
         if (activeTestPattern && activeTestPattern.type === 'all') {
           // Toggle off
           activeTestPattern = null;
@@ -1341,6 +1434,18 @@ wss.on('connection', (ws) => {
           updateRouterState();
           broadcastToClients({ type: 'log', message: 'Streaming test pattern to ALL controllers (R/G/B/Y).' });
         }
+      } else if (msg.type === 'preview-block') {
+        activeTestPattern = null;
+        activeOverride = null;
+        isPlaying = false;
+        activePreviewBlock = normalizeTimelineBlock(msg.block, 0);
+        previewStartRealTime = Date.now();
+        updateRouterState();
+        broadcastToClients({ type: 'log', message: `Previewing ${activePreviewBlock.name}.` });
+      } else if (msg.type === 'preview-stop') {
+        activePreviewBlock = null;
+        updateRouterState();
+        broadcastToClients({ type: 'log', message: 'Segment preview stopped.' });
       }
     } catch (e) {
       console.error('Error handling WebSocket message:', e);
