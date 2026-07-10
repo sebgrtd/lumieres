@@ -609,9 +609,9 @@ export function ImageStudio({ config }: ImageStudioProps) {
         setExportHeight(wallSize.height);
         setExportFormat('jpeg');
         setJpegQuality(85);
-        setStatus(`Fit to LED wall activé: ${wallSize.width} x ${wallSize.height}.`);
+        setStatus(`Wall preset activated: ${wallSize.width} x ${wallSize.height}.`);
       } else {
-        setStatus('Fit to LED wall désactivé.');
+        setStatus('Wall preset disabled.');
       }
       return next;
     });
@@ -788,7 +788,7 @@ export function ImageStudio({ config }: ImageStudioProps) {
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
                 <span className="badge badge-cyan">{renderTarget.width} x {renderTarget.height}</span>
                 {fitToWall && wallSize && (
-                  <span className="badge badge-gold">LED wall fit active</span>
+                  <span className="badge badge-gold">Wall preset active</span>
                 )}
                 <span style={{ color: 'var(--text-muted)', fontSize: '0.78rem', marginTop: '6px' }}>{lastExportLabel || cropSummary}</span>
               </div>
@@ -933,11 +933,11 @@ export function ImageStudio({ config }: ImageStudioProps) {
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               <button className="secondary" onClick={toggleFitToWall} disabled={!hasImage || !wallSize} style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
                 <Sparkles size={16} />
-                {fitToWall ? 'Disable wall fit' : 'Fit to LED wall'}
+                {fitToWall ? 'Disable Wall Preset' : 'Apply Wall Preset'}
               </button>
               <button className="secondary" onClick={applyWallPreset} disabled={!hasImage || !wallSize} style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
                 <Sparkles size={16} />
-                Apply wall preset
+                Set Wall Size
               </button>
               {wallSize && (
                 <span className="badge badge-gold">

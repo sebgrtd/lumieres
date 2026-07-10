@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { Play, Pause, Square, Radio, Cpu, Settings, Activity, Trash2, Plus, Volume2, ImagePlus } from 'lucide-react';
+import { Play, Pause, Square, Radio, Cpu, Settings, Activity, Trash2, Plus, Volume2, ImagePlus, Film } from 'lucide-react';
 import { Visualizer } from './components/Visualizer.tsx';
 import { synthInstance } from './components/AudioEngine.ts';
 import { analyzeAudioBeats } from './components/AudioAnalyzer.ts';
 import { SHOW_DURATION_SECONDS, SHOW_TIMELINE, type EffectParams, type TimelineBlock } from './timeline/showTimeline.ts';
 import { ImageStudio } from './components/ImageStudio.tsx';
+import { VideoStudio } from './components/VideoStudio.tsx';
 import { validateRouterConfig, type ConfigHealthItem, type RouterConfig } from './router/mapping.ts';
 
 const LANE_LABELS: Record<TimelineBlock['lane'], string> = {
@@ -107,7 +108,7 @@ interface EHubMonitorState {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'timeline' | 'images' | 'debug' | 'ehub' | 'config'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'timeline' | 'images' | 'videos' | 'debug' | 'ehub' | 'config'>('dashboard');
   const [wsConnected, setWsConnected] = useState(false);
   const [telemetry, setTelemetry] = useState<any>({ fps: 0, packetsPerSec: 0, kbps: 0, ehubPacketsPerSec: 0 });
   const [currentTime, setCurrentTime] = useState(0);
@@ -763,6 +764,13 @@ export default function App() {
           onClick={() => setActiveTab('images')}
         >
           <ImagePlus size={16} style={{ marginRight: '6px', display: 'inline' }} /> Image Studio
+        </button>
+        <button
+          className="secondary"
+          style={{ borderRadius: '0', borderBottom: activeTab === 'videos' ? '2px solid var(--color-red)' : 'none', color: activeTab === 'videos' ? 'var(--text-primary)' : 'var(--text-secondary)' }}
+          onClick={() => setActiveTab('videos')}
+        >
+          <Film size={16} style={{ marginRight: '6px', display: 'inline' }} /> Video Studio
         </button>
         <button
           className="secondary"
@@ -1440,6 +1448,8 @@ export default function App() {
         )}
 
         {activeTab === 'images' && <ImageStudio config={config} />}
+
+        {activeTab === 'videos' && <VideoStudio config={config} />}
 
         {activeTab === 'debug' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', flex: 1 }}>
