@@ -19,6 +19,13 @@ import {
   type LedWallConfig,
 } from './src/router/mapping.ts';
 import { SHOW_DURATION_SECONDS, SHOW_TIMELINE, type EffectParams, type TimelineBlock } from './src/timeline/showTimeline.ts';
+import { renderShowFrame } from './src/show/showEngine.ts';
+import {
+  isShowDocument,
+  type FixtureState,
+  type ProjectorState,
+  type ShowDocument,
+} from './src/types/show.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -36,7 +43,21 @@ const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
 // Global Router State
 const CONFIG_FILE = path.join(__dirname, 'config.json');
 const SHOW_FILE = path.join(__dirname, 'show.json');
+const SHOW_DOCUMENT_FILE = path.join(__dirname, 'show.lumieres.json');
 let activeConfig: RouterConfig = normalizeRouterConfig(generateDefaultConfig());
+
+function loadShowDocument(): ShowDocument {
+  const parsed: unknown = JSON.parse(fs.readFileSync(SHOW_DOCUMENT_FILE, 'utf8'));
+  if (!isShowDocument(parsed)) throw new Error('show.lumieres.json does not match the supported show format.');
+  return parsed;
+}
+
+function persistShowDocument(show: ShowDocument) {
+  fs.writeFileSync(SHOW_DOCUMENT_FILE, JSON.stringify(show, null, 2), 'utf8');
+}
+
+let activeShowDocument = loadShowDocument();
+let documentPlaybackActive = false;
 
 if (fs.existsSync(CONFIG_FILE)) {
   try {
@@ -383,6 +404,7 @@ function routeEHubEntities(entities: EntityState[], source: 'udp' | 'fake' = 'ud
 }
 
 function startShowFromBeginning() {
+  documentPlaybackActive = false;
   activeTestPattern = null;
   activeOverride = null;
   playbackTime = 0;
@@ -390,6 +412,120 @@ function startShowFromBeginning() {
   isPlaying = true;
   dirtyUniverses.clear();
   updateRouterState();
+}
+
+const LEGACY_WALL_EFFECTS = new Set([
+  'black', 'guitar_intro', 'intro_ticks', 'blue_star_burst',
+  'quadrant_flashes', 'laser_sweeps', 'reactive_drop',
+]);
+const LEGACY_LYRE_EFFECTS = new Set([
+  'black', 'lyre_intro', 'lyre_kick_pulse', 'lyre_circle_color',
+  'lyre_buildup_strobe', 'lyre_drop_trap',
+]);
+const LEGACY_STATIC_EFFECTS = new Set([
+  'static_off', 'static_measure_pulse', 'static_snare_flash',
+  'static_dimmer_rise', 'static_drop_strobe',
+]);
+
+function writeDocumentWall(pixels: Uint8ClampedArray, overlayOnly = false) {
+  forEachVisibleWallPixel((physicalX, physicalY, designX, designY) => {
+    const offset = (designY * DESIGN_WIDTH + designX) * 4;
+    const r = pixels[offset] ?? 0;
+    const g = pixels[offset + 1] ?? 0;
+    const b = pixels[offset + 2] ?? 0;
+    if (overlayOnly && r === 0 && g === 0 && b === 0) return;
+    const target = activeConfig.entityMap[getWallEntityId(physicalX, physicalY)];
+    if (!target) return;
+    const buffer = getUniverseBuffer(target.ip, target.universe);
+    buffer[target.channel] = r;
+    buffer[target.channel + 1] = g;
+    buffer[target.channel + 2] = b;
+    dirtyUniverses.add(`${target.ip}:${target.universe}`);
+  });
+}
+
+function writeDocumentFixtures(fixtures: FixtureState[]) {
+  fixtures.forEach((fixture, fixtureIndex) => {
+    const baseId = 34000 + (fixtureIndex + 1) * 100;
+    const values = [fixture.pan, 0, fixture.tilt, 0, 0, fixture.dimmer, fixture.strobe, fixture.colorWheel, 0, 0, 0, 0, 0];
+    values.forEach((value, channel) => {
+      const target = activeConfig.entityMap[baseId + channel];
+      if (!target) return;
+      const buffer = getUniverseBuffer(target.ip, target.universe);
+      buffer[target.channel] = Math.max(0, Math.min(255, Math.round(value)));
+      dirtyUniverses.add(`${target.ip}:${target.universe}`);
+    });
+  });
+}
+
+function writeDocumentProjector(projector: ProjectorState) {
+  const intensity = Math.max(0, Math.min(255, projector.intensity)) / 255;
+  [projector.red, projector.green, projector.blue, projector.white].forEach((value, index) => {
+    const target = activeConfig.entityMap[33001 + index];
+    if (!target) return;
+    const buffer = getUniverseBuffer(target.ip, target.universe);
+    buffer[target.channel] = Math.max(0, Math.min(255, Math.round(value * intensity)));
+    dirtyUniverses.add(`${target.ip}:${target.universe}`);
+  });
+}
+
+function evaluateShowDocumentFrame(frame: number, isAudioImpact: boolean) {
+  const time = frame / activeShowDocument.fps;
+  const activeClips = activeShowDocument.tracks.flatMap((track) => (
+    track.muted
+      ? []
+      : track.clips
+        .filter((clip) => frame >= clip.startFrame && frame <= clip.endFrame)
+        .map((clip) => ({ track, clip }))
+  ));
+
+  const legacyWall = activeClips.find(({ track, clip }) => (
+    track.kind === 'screen' && clip.kind === 'pattern' && LEGACY_WALL_EFFECTS.has(clip.pattern)
+  ));
+  const customScreenTracks = activeShowDocument.tracks
+    .filter((track) => track.kind === 'screen')
+    .map((track) => ({
+      ...track,
+      clips: track.clips.filter((clip) => clip.kind === 'element' || (clip.kind === 'pattern' && !LEGACY_WALL_EFFECTS.has(clip.pattern))),
+    }))
+    .filter((track) => track.clips.length > 0);
+
+  if (legacyWall?.clip.kind === 'pattern') {
+    evaluateWallBlock(legacyWall.clip.pattern, time, isAudioImpact, legacyWall.clip.effectParams);
+  }
+  if (customScreenTracks.length > 0 || !legacyWall) {
+    const screenShow = { ...activeShowDocument, tracks: customScreenTracks };
+    const rendered = renderShowFrame(screenShow, frame, DESIGN_WIDTH, DESIGN_HEIGHT);
+    writeDocumentWall(rendered.pixels, Boolean(legacyWall));
+  }
+
+  const legacyLyres = activeClips.find(({ track, clip }) => (
+    track.kind === 'fixture' && clip.kind === 'fixture' && clip.preset && LEGACY_LYRE_EFFECTS.has(clip.preset)
+  ));
+  const customLyres = activeClips.some(({ track, clip }) => (
+    track.kind === 'fixture' && clip.kind === 'fixture' && (!clip.preset || !LEGACY_LYRE_EFFECTS.has(clip.preset))
+  ));
+  if (legacyLyres?.clip.kind === 'fixture' && legacyLyres.clip.preset) {
+    evaluateLyresBlock(legacyLyres.clip.preset, time, isAudioImpact, legacyLyres.clip.effectParams);
+  } else if (customLyres) {
+    writeDocumentFixtures(renderShowFrame(activeShowDocument, frame, 1, 1).fixtures);
+  } else {
+    evaluateLyresBlock('black', time, isAudioImpact);
+  }
+
+  const legacyStatic = activeClips.find(({ track, clip }) => (
+    track.kind === 'projector' && clip.kind === 'projector' && clip.preset && LEGACY_STATIC_EFFECTS.has(clip.preset)
+  ));
+  const customStatic = activeClips.some(({ track, clip }) => (
+    track.kind === 'projector' && clip.kind === 'projector' && (!clip.preset || !LEGACY_STATIC_EFFECTS.has(clip.preset))
+  ));
+  if (legacyStatic?.clip.kind === 'projector' && legacyStatic.clip.preset) {
+    evaluateStaticBlock(legacyStatic.clip.preset, time, isAudioImpact, legacyStatic.clip.effectParams);
+  } else if (customStatic) {
+    writeDocumentProjector(renderShowFrame(activeShowDocument, frame, 1, 1).projector);
+  } else {
+    evaluateStaticBlock('static_off', time, isAudioImpact);
+  }
 }
 
 // 40Hz Main Loop Manager
@@ -405,7 +541,10 @@ function updateRouterState() {
         if (isPlaying) {
           const now = Date.now();
           playbackTime = (now - playbackStartRealTime) / 1000;
-          if (playbackTime > SHOW_DURATION_SECONDS) {
+          const playbackDuration = documentPlaybackActive
+            ? activeShowDocument.durationFrames / activeShowDocument.fps
+            : SHOW_DURATION_SECONDS;
+          if (playbackTime > playbackDuration) {
             playbackTime = 0;
             playbackStartRealTime = now;
           }
@@ -456,19 +595,17 @@ function updateRouterState() {
             });
           }
         } else if (isPlaying) {
-          const activeBlocks = timelineBlocks.filter(b => playbackTime >= b.startTime && playbackTime <= b.endTime);
-          
-          // Evaluate wall block
-          const wallBlock = activeBlocks.find(b => b.lane === 'wall');
-          evaluateWallBlock(wallBlock ? wallBlock.type : 'black', playbackTime, isAudioImpact, wallBlock?.params);
-
-          // Evaluate DMX Lyres block
-          const lyresBlock = activeBlocks.find(b => b.lane === 'lyres');
-          evaluateLyresBlock(lyresBlock ? lyresBlock.type : 'black', playbackTime, isAudioImpact, lyresBlock?.params);
-
-          // Evaluate Static Spotlight block
-          const staticBlock = activeBlocks.find(b => b.lane === 'static');
-          evaluateStaticBlock(staticBlock ? staticBlock.type : 'static_off', playbackTime, isAudioImpact, staticBlock?.params);
+          if (documentPlaybackActive) {
+            evaluateShowDocumentFrame(Math.round(playbackTime * activeShowDocument.fps), isAudioImpact);
+          } else {
+            const activeBlocks = timelineBlocks.filter(b => playbackTime >= b.startTime && playbackTime <= b.endTime);
+            const wallBlock = activeBlocks.find(b => b.lane === 'wall');
+            evaluateWallBlock(wallBlock ? wallBlock.type : 'black', playbackTime, isAudioImpact, wallBlock?.params);
+            const lyresBlock = activeBlocks.find(b => b.lane === 'lyres');
+            evaluateLyresBlock(lyresBlock ? lyresBlock.type : 'black', playbackTime, isAudioImpact, lyresBlock?.params);
+            const staticBlock = activeBlocks.find(b => b.lane === 'static');
+            evaluateStaticBlock(staticBlock ? staticBlock.type : 'static_off', playbackTime, isAudioImpact, staticBlock?.params);
+          }
         } else {
           // If the show is paused/stopped, output black background and let overrides apply on top
           evaluateWallBlock('black', playbackTime, isAudioImpact);
@@ -1819,6 +1956,7 @@ wss.on('connection', (ws) => {
   
   ws.send(JSON.stringify({ type: 'config', data: activeConfig }));
   ws.send(JSON.stringify({ type: 'timeline', data: timelineBlocks }));
+  ws.send(JSON.stringify({ type: 'show-document', data: activeShowDocument }));
   ws.send(JSON.stringify({ type: 'telemetry', data: currentTelemetry }));
 
   ws.on('message', (message) => {
@@ -1837,6 +1975,18 @@ wss.on('connection', (ws) => {
         isPlaying = true;
         playbackStartRealTime = Date.now() - playbackTime * 1000;
         updateRouterState();
+      } else if (msg.type === 'play-document') {
+        benchmarkActive = false;
+        activePreviewBlock = null;
+        activeTestPattern = null;
+        activeImageFrame = null;
+        documentPlaybackActive = true;
+        const requestedFrame = Math.max(0, Math.min(activeShowDocument.durationFrames, Math.round(Number(msg.frame) || 0)));
+        playbackTime = requestedFrame / activeShowDocument.fps;
+        playbackStartRealTime = Date.now() - playbackTime * 1000;
+        isPlaying = true;
+        updateRouterState();
+        broadcastToClients({ type: 'log', message: `Show document started from frame ${requestedFrame}.` });
       } else if (msg.type === 'demo-start') {
         startShowFromBeginning();
         broadcastToClients({ type: 'log', message: 'Final demo mode started from 0.00s.' });
@@ -2060,6 +2210,26 @@ app.post('/api/show/reset', (_req, res) => {
     res.json({ success: true, duration: SHOW_DURATION_SECONDS, blocks: timelineBlocks });
   } catch (e) {
     res.status(500).json({ success: false, error: (e as Error).message });
+  }
+});
+
+app.get('/api/show-document', (_req, res) => {
+  res.json(activeShowDocument);
+});
+
+app.post('/api/show-document', (req, res) => {
+  try {
+    const candidate: unknown = req.body;
+    if (!isShowDocument(candidate)) {
+      res.status(400).json({ success: false, error: 'Invalid show document.' });
+      return;
+    }
+    activeShowDocument = candidate;
+    persistShowDocument(activeShowDocument);
+    broadcastToClients({ type: 'show-document', data: activeShowDocument });
+    res.json({ success: true, show: activeShowDocument });
+  } catch (error) {
+    res.status(400).json({ success: false, error: (error as Error).message });
   }
 });
 

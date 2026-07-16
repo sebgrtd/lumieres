@@ -6,6 +6,11 @@ import { analyzeAudioBeats } from './components/AudioAnalyzer.ts';
 import { SHOW_DURATION_SECONDS, SHOW_TIMELINE, type EffectParams, type TimelineBlock } from './timeline/showTimeline.ts';
 import { ImageStudio } from './components/ImageStudio.tsx';
 import { validateRouterConfig, type ConfigHealthItem, type RouterConfig } from './router/mapping.ts';
+import { ShowEditor } from './components/show-editor/ShowEditor.tsx';
+import { cloneShow, isShowDocument, type ShowDocument } from './types/show.ts';
+import defaultShowData from '../show.lumieres.json';
+
+const DEFAULT_SHOW_DOCUMENT = defaultShowData as unknown as ShowDocument;
 
 const LANE_LABELS: Record<TimelineBlock['lane'], string> = {
   wall: 'LED Wall Lane',
@@ -138,6 +143,8 @@ export default function App() {
 
   const [blocks, setBlocks] = useState<TimelineBlock[]>(() => SHOW_TIMELINE.map((block) => ({ ...block })));
   const [showDirty, setShowDirty] = useState(false);
+  const [showDocument, setShowDocument] = useState<ShowDocument>(() => cloneShow(DEFAULT_SHOW_DOCUMENT));
+  const [showDocumentDirty, setShowDocumentDirty] = useState(false);
 
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [previewingBlockId, setPreviewingBlockId] = useState<string | null>(null);
@@ -211,6 +218,9 @@ export default function App() {
         } else if (msg.type === 'timeline') {
           setBlocks(msg.data);
           setShowDirty(false);
+        } else if (msg.type === 'show-document' && isShowDocument(msg.data)) {
+          setShowDocument(cloneShow(msg.data));
+          setShowDocumentDirty(false);
         } else if (msg.type === 'telemetry') {
           setTelemetry(msg.data);
         } else if (msg.type === 'frame') {
@@ -561,6 +571,40 @@ export default function App() {
     }
   };
 
+  const saveShowDocument = async (candidate: ShowDocument): Promise<boolean> => {
+    try {
+      const response = await fetch('/api/show-document', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(candidate),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        addLog(`Impossible d'enregistrer le show : ${data.error ?? 'erreur inconnue'}`);
+        return false;
+      }
+      setShowDocument(cloneShow(candidate));
+      setShowDocumentDirty(false);
+      addLog('Show enregistré dans show.lumieres.json.');
+      return true;
+    } catch (error) {
+      addLog(`Serveur indisponible : ${(error as Error).message}`);
+      return false;
+    }
+  };
+
+  const playShowDocumentFromFrame = async (candidate: ShowDocument, frame: number) => {
+    const saved = await saveShowDocument(candidate);
+    if (!saved) return;
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'play-document', frame }));
+    }
+    currentTimeRef.current = frame / candidate.fps;
+    setCurrentTime(frame / candidate.fps);
+    setIsPlaying(true);
+    addLog(`Show document envoyé en live depuis la frame ${frame}.`);
+  };
+
   const resetShow = async () => {
     try {
       const res = await fetch('/api/show/reset', { method: 'POST' });
@@ -713,8 +757,8 @@ export default function App() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
       {/* 1. Header */}
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 24px', backgroundColor: 'var(--bg-surface)', borderBottom: '1px solid var(--border-muted)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+      <header className="app-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 24px', backgroundColor: 'var(--bg-surface)', borderBottom: '1px solid var(--border-muted)' }}>
+        <div className="app-brand" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <span style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>AT</span>
           <div>
             <h1 style={{ fontSize: '1.4rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>OSTERREICH</h1>
@@ -723,7 +767,7 @@ export default function App() {
         </div>
 
         {/* Telemetry Display */}
-        <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
+        <div className="app-telemetry" style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
           <div style={{ textAlign: 'right' }}>
             <span style={{ display: 'block', fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>ArtNet Pipeline</span>
             <span style={{ fontFamily: 'JetBrains Mono', fontSize: '0.9rem', color: 'var(--color-gold)' }}>
@@ -746,8 +790,9 @@ export default function App() {
       </header>
 
       {/* 2. Navigation */}
-      <div style={{ display: 'flex', backgroundColor: 'var(--bg-surface)', borderBottom: '1px solid var(--border-muted)', padding: '0 24px' }}>
+      <div className="app-navigation" style={{ display: 'flex', backgroundColor: 'var(--bg-surface)', borderBottom: '1px solid var(--border-muted)', padding: '0 24px' }}>
         <button
+          data-testid="nav-dashboard"
           className="secondary"
           style={{ borderRadius: '0', borderBottom: activeTab === 'dashboard' ? '2px solid var(--color-red)' : 'none', color: activeTab === 'dashboard' ? 'var(--text-primary)' : 'var(--text-secondary)' }}
           onClick={() => setActiveTab('dashboard')}
@@ -755,6 +800,7 @@ export default function App() {
           <Activity size={16} style={{ marginRight: '6px', display: 'inline' }} /> Dashboard
         </button>
         <button
+          data-testid="nav-timeline"
           className="secondary"
           style={{ borderRadius: '0', borderBottom: activeTab === 'timeline' ? '2px solid var(--color-red)' : 'none', color: activeTab === 'timeline' ? 'var(--text-primary)' : 'var(--text-secondary)' }}
           onClick={() => setActiveTab('timeline')}
@@ -762,6 +808,7 @@ export default function App() {
           <Cpu size={16} style={{ marginRight: '6px', display: 'inline' }} /> Timeline Editor
         </button>
         <button
+          data-testid="nav-images"
           className="secondary"
           style={{ borderRadius: '0', borderBottom: activeTab === 'images' ? '2px solid var(--color-red)' : 'none', color: activeTab === 'images' ? 'var(--text-primary)' : 'var(--text-secondary)' }}
           onClick={() => setActiveTab('images')}
@@ -1226,6 +1273,24 @@ export default function App() {
         )}
 
         {activeTab === 'timeline' && (
+          <ShowEditor
+            show={showDocument}
+            dirty={showDocumentDirty}
+            connected={wsConnected}
+            serverPlaying={isPlaying}
+            serverTime={currentTime}
+            onChange={(next) => {
+              setShowDocument(next);
+              setShowDocumentDirty(true);
+            }}
+            onSave={saveShowDocument}
+            onGoLive={playShowDocumentFromFrame}
+            onStopLive={handleStop}
+            onLog={addLog}
+          />
+        )}
+
+        {false && activeTab === 'timeline' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', flex: 1 }}>
             
             <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -1402,8 +1467,7 @@ export default function App() {
                 </div>
 
                 {(() => {
-                  const block = blocks.find(b => b.id === selectedBlockId);
-                  if (!block) return null;
+                  const block = blocks.find(b => b.id === selectedBlockId)!;
                   const params = getEffectParams(block);
                   return (
                     <>

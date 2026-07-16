@@ -8,8 +8,10 @@
     "dev:client": "vite",
     "dev:server": "tsx server.ts",
     "build": "vite build",
-    "test": "npm run test:mapping",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run test:mapping && playwright test",
     "test:mapping": "tsx tests/mapping.test.ts",
+    "test:e2e": "playwright test tests/show-editor.spec.ts",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview"
   },
@@ -23,6 +25,7 @@
     "ws": "^8.17.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/node": "^20.14.9",

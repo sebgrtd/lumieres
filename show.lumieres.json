@@ -1,0 +1,209 @@
+{
+  "formatVersion": 1,
+  "id": "cosmo-tanzschein-dev",
+  "name": "COSMÓ — Tanzschein",
+  "fps": 40,
+  "durationFrames": 1800,
+  "audio": {
+    "label": "COSMÓ — Tanzschein (45 s)",
+    "source": "file",
+    "preset": null,
+    "path": "/tanzschein.mp3",
+    "bpm": 130
+  },
+  "tracks": [
+    {
+      "id": "dev-wall",
+      "name": "LED Wall Lane",
+      "kind": "screen",
+      "target": "wall",
+      "color": "#ef3340",
+      "muted": false,
+      "locked": false,
+      "clips": [
+        {
+          "id": "16",
+          "name": "Tanzschein Laser Sweeps",
+          "kind": "pattern",
+          "pattern": "laser_sweeps",
+          "startFrame": 0,
+          "endFrame": 120,
+          "timeMode": "show",
+          "loop": { "enabled": false, "lengthFrames": 120 }
+        },
+        {
+          "id": "19",
+          "name": "Tanzschein Chorus Drop",
+          "kind": "pattern",
+          "pattern": "reactive_drop",
+          "startFrame": 120,
+          "endFrame": 1040,
+          "timeMode": "show",
+          "loop": { "enabled": false, "lengthFrames": 920 }
+        },
+        {
+          "id": "25",
+          "name": "Quadrant Controller Flash",
+          "kind": "pattern",
+          "pattern": "quadrant_flashes",
+          "startFrame": 1040,
+          "endFrame": 1280,
+          "timeMode": "show",
+          "loop": { "enabled": false, "lengthFrames": 240 }
+        },
+        {
+          "id": "28",
+          "name": "Tanzschein Laser Sweeps 2",
+          "kind": "pattern",
+          "pattern": "laser_sweeps",
+          "startFrame": 1280,
+          "endFrame": 1600,
+          "timeMode": "show",
+          "loop": { "enabled": false, "lengthFrames": 320 }
+        },
+        {
+          "id": "31",
+          "name": "Tanzschein Chorus Drop 2",
+          "kind": "pattern",
+          "pattern": "reactive_drop",
+          "startFrame": 1600,
+          "endFrame": 1800,
+          "timeMode": "show",
+          "loop": { "enabled": false, "lengthFrames": 200 }
+        }
+      ]
+    },
+    {
+      "id": "dev-lyres",
+      "name": "Moving Heads",
+      "kind": "fixture",
+      "target": "all-lyres",
+      "color": "#f0b429",
+      "muted": false,
+      "locked": false,
+      "clips": [
+        {
+          "id": "17",
+          "name": "Lyres Strobe Crescendo",
+          "kind": "fixture",
+          "preset": "lyre_buildup_strobe",
+          "startFrame": 0,
+          "endFrame": 120,
+          "timeMode": "show",
+          "loop": { "enabled": false, "lengthFrames": 120 },
+          "keyframes": []
+        },
+        {
+          "id": "20",
+          "name": "Lyres Mirror Trap Chases",
+          "kind": "fixture",
+          "preset": "lyre_drop_trap",
+          "startFrame": 120,
+          "endFrame": 1040,
+          "timeMode": "show",
+          "loop": { "enabled": false, "lengthFrames": 920 },
+          "keyframes": []
+        },
+        {
+          "id": "26",
+          "name": "Lyres Color Circular",
+          "kind": "fixture",
+          "preset": "lyre_circle_color",
+          "startFrame": 1040,
+          "endFrame": 1280,
+          "timeMode": "show",
+          "loop": { "enabled": false, "lengthFrames": 240 },
+          "keyframes": []
+        },
+        {
+          "id": "29",
+          "name": "Lyres Strobe Crescendo 2",
+          "kind": "fixture",
+          "preset": "lyre_buildup_strobe",
+          "startFrame": 1280,
+          "endFrame": 1600,
+          "timeMode": "show",
+          "loop": { "enabled": false, "lengthFrames": 320 },
+          "keyframes": []
+        },
+        {
+          "id": "32",
+          "name": "Lyres Mirror Trap Chases 2",
+          "kind": "fixture",
+          "preset": "lyre_drop_trap",
+          "startFrame": 1600,
+          "endFrame": 1800,
+          "timeMode": "show",
+          "loop": { "enabled": false, "lengthFrames": 200 },
+          "keyframes": []
+        }
+      ]
+    },
+    {
+      "id": "dev-static",
+      "name": "Static Spotlight",
+      "kind": "projector",
+      "target": "static-1",
+      "color": "#28c2ff",
+      "muted": false,
+      "locked": false,
+      "clips": [
+        {
+          "id": "18",
+          "name": "Spot Dimmer Rise",
+          "kind": "projector",
+          "preset": "static_dimmer_rise",
+          "startFrame": 0,
+          "endFrame": 120,
+          "timeMode": "show",
+          "loop": { "enabled": false, "lengthFrames": 120 },
+          "keyframes": []
+        },
+        {
+          "id": "21",
+          "name": "Spot Strobe Drop",
+          "kind": "projector",
+          "preset": "static_drop_strobe",
+          "startFrame": 120,
+          "endFrame": 1040,
+          "timeMode": "show",
+          "loop": { "enabled": false, "lengthFrames": 920 },
+          "keyframes": []
+        },
+        {
+          "id": "27",
+          "name": "Spot Magenta Snare Flash",
+          "kind": "projector",
+          "preset": "static_snare_flash",
+          "startFrame": 1040,
+          "endFrame": 1280,
+          "timeMode": "show",
+          "loop": { "enabled": false, "lengthFrames": 240 },
+          "keyframes": []
+        },
+        {
+          "id": "30",
+          "name": "Spot Dimmer Rise 2",
+          "kind": "projector",
+          "preset": "static_dimmer_rise",
+          "startFrame": 1280,
+          "endFrame": 1600,
+          "timeMode": "show",
+          "loop": { "enabled": false, "lengthFrames": 320 },
+          "keyframes": []
+        },
+        {
+          "id": "33",
+          "name": "Spot Strobe Drop 2",
+          "kind": "projector",
+          "preset": "static_drop_strobe",
+          "startFrame": 1600,
+          "endFrame": 1800,
+          "timeMode": "show",
+          "loop": { "enabled": false, "lengthFrames": 200 },
+          "keyframes": []
+        }
+      ]
+    }
+  ]
+}
