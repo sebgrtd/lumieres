@@ -51,7 +51,6 @@ test('edits a screen element frame by frame and keeps the root show importable',
   await expect(page.getByLabel('Nom du show')).toHaveValue('COSMÓ — Tanzschein');
   await expect(page.getByTestId('clip-31')).toContainText('Tanzschein Chorus Drop 2');
 
-  await page.getByTestId('add-rectangle').click();
   await page.screenshot({
     path: path.join(screenshotsDirectory, 'timeline-editor-desktop.png'),
     fullPage: true,
@@ -75,5 +74,42 @@ test('the editor remains usable on a phone-sized viewport', async ({ page }) => 
     path: path.join(screenshotsDirectory, 'timeline-editor-mobile.png'),
     fullPage: true,
     animations: 'disabled',
+  });
+});
+
+test('decomposes pattern into shapes and allows visual dragging on the canvas', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 1050 });
+  await page.goto('/');
+  await page.getByTestId('nav-timeline').click();
+
+  await page.getByTestId('clip-16').click();
+  await expect(page.getByTestId('inspector')).toContainText('Motif écran');
+
+  await page.getByRole('button', { name: 'Décomposer en formes éditables' }).click();
+
+  const laserClip = page.locator('.se-clip.element').first();
+  await laserClip.click({ force: true });
+  await expect(page.getByTestId('inspector')).toContainText('Laser Diagonal');
+
+  const bbox = page.locator('.se-canvas-bounding-box');
+  await expect(bbox).toBeVisible();
+
+  const initialX = await page.locator('.se-number-field').filter({ hasText: /^X/ }).locator('input').inputValue();
+
+  const bboxBounds = await bbox.boundingBox();
+  expect(bboxBounds).not.toBeNull();
+  if (bboxBounds) {
+    await page.mouse.move(bboxBounds.x + bboxBounds.width / 2, bboxBounds.y + bboxBounds.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(bboxBounds.x + bboxBounds.width / 2 + 50, bboxBounds.y + bboxBounds.height / 2 - 30, { steps: 5 });
+    await page.mouse.up();
+  }
+
+  const finalX = await page.locator('.se-number-field').filter({ hasText: /^X/ }).locator('input').inputValue();
+  expect(finalX).not.toBe(initialX);
+
+  await page.screenshot({
+    path: path.join(screenshotsDirectory, 'decomposed-interactive-drag.png'),
+    fullPage: true,
   });
 });

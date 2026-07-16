@@ -307,6 +307,294 @@ function useAudioWaveform(audioPath: string | undefined, durationFrames: number,
   return { waveform, loading };
 }
 
+const LEGACY_PATTERN_CODES: Record<string, string> = {
+  laser_sweeps: `// Variables : x, y (0-127), t (secondes), d (distance), a (angle), f (frame)
+// Définissez r, g, b (0-255)
+
+const dx = x - 64;
+const dy = y - 64;
+const dist = Math.sqrt(dx*dx + dy*dy);
+const angle = Math.atan2(dy, dx);
+const bounce = Math.exp(-(((t + 0.1) % 0.4615) / 0.4615) * 4.0);
+
+// Lion Mask in center
+const maneRadius = 36 + 6 * bounce;
+const isMane = dist < maneRadius && dist > 24 && Math.floor(angle * 10) % 2 === 0;
+const inFace = dist <= 24 && dy > -24;
+
+if (isMane) {
+  r = 255; g = 130; b = 0;
+} else if (inFace) {
+  r = 200; g = 200; b = 210;
+  const eyeL = Math.abs(dy - 3) < 1.2 && dx < -4 && dx > -11;
+  const eyeR = Math.abs(dy - 3) < 1.2 && dx > 4 && dx < 11;
+  const inSnout = dy < -4 && dy > -14 && Math.abs(dx) < 7;
+  if (eyeL || eyeR) {
+    r = 255; g = 180; b = 0;
+  } else if (inSnout) {
+    r = 45; g = 45; b = 55;
+  }
+} else {
+  // Laser beams
+  let progress = 0;
+  if (t < 3.0) {
+    progress = Math.max(0, Math.min(1.0, (t + 4.3) / 7.3));
+  } else {
+    progress = Math.max(0, Math.min(1.0, (t - 32.0) / 8.0));
+  }
+  const sweepAngle = t * (3.0 + progress * 5.0);
+  const line1 = Math.abs(dx * Math.sin(sweepAngle) - dy * Math.cos(sweepAngle)) < 1.8;
+  const line2 = Math.abs(dx * Math.cos(sweepAngle) + dy * Math.sin(sweepAngle)) < 1.8;
+
+  if (line1 || line2) {
+    if (Math.sin(t * 5) > 0) {
+      r = 0; g = 255; b = 255;
+    } else {
+      r = 255; g = 0; b = 150;
+    }
+  } else {
+    const maxDist = Math.max(Math.abs(dx), Math.abs(dy));
+    const trailSize = Math.floor((t * 40) % 64);
+    if (maxDist === trailSize) {
+      r = 30; g = 0; b = 40;
+    }
+  }
+
+  const isBorder = x < 4 || x > 123 || y < 4 || y > 123;
+  const strobeOn = Math.floor(t * (10 + progress * 30)) % 2 === 0;
+  if (isBorder && strobeOn) {
+    r = 255; g = 255; b = 255;
+  }
+}`,
+
+  reactive_drop: `// Variables : x, y (0-127), t (secondes), d (distance), a (angle), f (frame)
+// Définissez r, g, b (0-255)
+
+const colIdx = Math.floor(x / 8);
+const bounce = Math.exp(-(((t + 0.1) % 0.4615) / 0.4615) * 4.0);
+const baseHeight = (Math.sin(colIdx * 0.7 + t * 12) * 0.3 + 0.7) * 35;
+const eqHeight = 10 + baseHeight * (0.4 + 0.6 * bounce);
+
+// Show Singer COSMO
+const showSinger = (t >= 10.85 && t < 16.6) || (t >= 18.25 && t < 26.0);
+let isSingerPixel = false;
+
+if (showSinger) {
+  // Buste de COSMÓ
+  const sy = y + 22;
+  const dx = x - 64;
+  const bodyY = sy - 30;
+  const torsoWidth = 18 + (bodyY * 0.32);
+  const inTorso = sy >= 18 && sy <= 67 && Math.abs(dx) < torsoWidth && bodyY >= 0;
+  const inNeck = sy >= 62 && sy <= 76 && Math.abs(dx) < 7;
+  const inLeftArm = x >= 18 && x <= 40 && sy >= 18 && sy <= 64 && Math.abs((x - 29) - (sy - 18) * 0.18) < 8;
+  const inRightArm = x >= 89 && x <= 111 && sy >= 16 && sy <= 62 && Math.abs((x - 100) + (sy - 18) * 0.14) < 8;
+  const inFace = ((dx * dx) / (17 * 17) + ((sy - 85) * (sy - 85)) / (22 * 22)) < 1;
+  const hairCap = ((dx + 1) * (dx + 1)) / (25 * 25) + ((sy - 106) * (sy - 106)) / (16 * 16) < 1;
+  const hairCrown = sy >= 99 && sy <= 124 && Math.abs(dx + 2 + Math.sin(x * 0.55) * 5) < (23 - Math.max(0, sy - 113) * 0.7);
+  const hairFringe = sy >= 91 && sy <= 105 && x >= 42 && x <= 70 && Math.sin((x - 42) * 0.7) * 5 + 98 > sy;
+  const sideBurns = (x >= 42 && x <= 49 && sy >= 80 && sy <= 99) || (x >= 78 && x <= 84 && sy >= 82 && sy <= 99);
+  const inHair = hairCap || hairCrown || hairFringe || sideBurns;
+  const curl = inHair && ((x * 7 + sy * 5 + Math.floor(t * 6)) % 11 < 8);
+
+  const starCx = 55;
+  const starCy = 89;
+  const sx = x - starCx;
+  const syStar = sy - starCy;
+  const starDist = Math.sqrt(sx * sx + syStar * syStar);
+  const starAngle = Math.atan2(syStar, sx);
+  const starRadius = 7 + 5 * Math.max(0, Math.cos(starAngle * 5));
+  const bluePaint = (starDist < starRadius && starDist > 2) || starDist <= 5 || (x >= 42 && x <= 62 && sy >= 78 && sy <= 101 && Math.abs((sy - 90) + (x - 53) * 0.48) < 3.8);
+  const leftEye = sy >= 88 && sy <= 90 && x >= 55 && x <= 59;
+
+  if (bluePaint) {
+    r = 0; g = 110; b = 255; isSingerPixel = true;
+  } else if (leftEye) {
+    r = 255; g = 255; b = 255; isSingerPixel = true;
+  } else if (inHair) {
+    r = curl ? 50 : 35; g = curl ? 40 : 25; b = curl ? 35 : 20; isSingerPixel = true;
+  } else if (inFace) {
+    const isMouth = sy >= 71 && sy <= 72 && Math.abs(dx) < 6;
+    if (isMouth) { r = 220; g = 20; b = 40; } else { r = 240; g = 190; b = 160; }
+    isSingerPixel = true;
+  } else if (inNeck) {
+    r = 215; g = 165; b = 135; isSingerPixel = true;
+  } else if (inTorso) {
+    const pattern = ((x + sy) % 12 < 5) || (Math.floor(x / 4) % 2 === Math.floor(sy / 4) % 2);
+    if (pattern) { r = 12; g = 145; b = 125; } else { r = 4; g = 70; b = 62; }
+    isSingerPixel = true;
+  } else if (inLeftArm || inRightArm) {
+    r = 240; g = 190; b = 160; isSingerPixel = true;
+  }
+}
+
+if (!isSingerPixel) {
+  const inRibbon = y >= 24 && y < 104;
+  if (inRibbon) {
+    r = 0; g = 0; b = 0;
+  } else {
+    const isInsideEq = (y < eqHeight) || (y > 127 - eqHeight);
+    if (isInsideEq) {
+      if (y < 20 || y > 107) {
+        r = 255; g = 0; b = 150;
+      } else {
+        r = 0; g = 255; b = 255;
+      }
+    } else {
+      const beatIdx = Math.floor((t + 0.1) / 0.4615);
+      const strobeWashOn = beatIdx % 2 === 0;
+      if (strobeWashOn) {
+        r = 0; g = 20; b = 40;
+      } else {
+        r = 25; g = 0; b = 15;
+      }
+    }
+  }
+}`,
+
+  quadrant_flashes: `// Variables : x, y (0-127), t (secondes), d (distance), a (angle), f (frame)
+// Définissez r, g, b (0-255)
+
+const dx = x - 64;
+const dy = y - 64;
+const dist = Math.sqrt(dx*dx + dy*dy);
+const bounce = Math.exp(-(((t + 0.1) % 0.4615) / 0.4615) * 4.0);
+
+// Gorilla Mask in center
+const inFace = (dx * dx) / (28 * 28) + (dy * dy) / (26 * 26) < 1.0 && dy > -18;
+const browWidth = 24;
+const isBrow = dy >= 10 && dy <= 14 && Math.abs(dx) < browWidth;
+const noseWidth = 6;
+const isNose = dy >= -6 && dy <= 0 && Math.abs(dx) < noseWidth;
+
+if (isBrow) {
+  r = 140; g = 145; b = 160;
+} else if (isNose) {
+  r = 30; g = 30; b = 40;
+} else if (inFace) {
+  r = 50; g = 50; b = 60;
+  const eyeL = Math.sqrt((dx + 8)*(dx + 8) + (dy - 4)*(dy - 4)) < 2.5;
+  const eyeR = Math.sqrt((dx - 8)*(dx - 8) + (dy - 4)*(dy - 4)) < 2.5;
+  if (eyeL || eyeR) {
+    r = 255; g = 0; b = 0;
+  }
+} else {
+  // Quadrant flash
+  const beatIdx = Math.floor((t + 0.1) / 0.4615);
+  const beatInMeasure = beatIdx % 4;
+  const beatProgress = ((t + 0.1) % 0.4615) / 0.4615;
+
+  let pixelQuad = 0;
+  if (x < 64 && y >= 64) pixelQuad = 0;
+  else if (x >= 64 && y >= 64) pixelQuad = 1;
+  else if (x < 64 && y < 64) pixelQuad = 2;
+  else pixelQuad = 3;
+
+  if (pixelQuad === beatInMeasure) {
+    const decay = 1 - beatProgress;
+    r = Math.floor(255 * decay);
+    g = 0;
+    b = Math.floor(128 * decay);
+  } else {
+    r = 0; g = 20; b = 30;
+  }
+}`,
+
+  guitar_intro: `// Variables : x, y (0-127), t (secondes), d (distance), a (angle), f (frame)
+// Définissez r, g, b (0-255)
+
+if (t < 0.6) {
+  r = g = b = 0;
+} else {
+  const bounce = Math.exp(-(((t + 0.1) % 0.4615) / 0.4615) * 4.0);
+  const wave = Math.sin(x * 0.15 + t * 12) * 6 * bounce;
+  const stringY = 64 + Math.round(wave);
+  
+  if (Math.abs(y - stringY) < 1.5) {
+    r = 235; g = 160; b = 45;
+  } else {
+    const dist = Math.abs(y - stringY);
+    const glow = Math.max(0, 1.0 - dist / 12) * bounce;
+    r = Math.round(40 * glow);
+    g = Math.round(25 * glow);
+    b = Math.round(8 * glow);
+  }
+}`,
+
+  intro_ticks: `// Variables : x, y (0-127), t (secondes), d (distance), a (angle), f (frame)
+// Définissez r, g, b (0-255)
+
+const dx = Math.abs(x - 64);
+const dy = Math.abs(y - 64);
+const maxDist = Math.max(dx, dy);
+
+const beatIdx = Math.floor((t + 0.1) / 0.4615);
+const beatInMeasure = beatIdx % 4;
+const beatProgress = ((t + 0.1) % 0.4615) / 0.4615;
+
+if (beatInMeasure === 0 || beatInMeasure === 2) {
+  const size = Math.floor((1.0 - beatProgress) * 64);
+  if (maxDist === size || maxDist === size - 1) {
+    r = 0; g = 220; b = 255;
+  }
+}
+
+const dist = Math.sqrt((x-64)*(x-64) + (y-64)*(y-64));
+if (dist < 4) {
+  const intensity = Math.floor(255 * (1 - beatProgress));
+  r = g = b = intensity;
+}
+
+if (t > 4.7 && t <= 5.0) {
+  const fade = (5.0 - t) / 0.3;
+  r = Math.round(r * fade);
+  g = Math.round(g * fade);
+  b = Math.round(b * fade);
+}`,
+
+  blue_star_burst: `// Variables : x, y (0-127), t (secondes), d (distance), a (angle), f (frame)
+// Définissez r, g, b (0-255)
+
+const dx = Math.abs(x - 64);
+const dy = Math.abs(y - 64);
+const beatProgress = ((t + 0.1) % 0.4615) / 0.4615;
+const bounce = Math.exp(-beatProgress * 4.0);
+
+// Gazelle Mask in center
+const inFace = dy < 12 && dy > -30 && Math.abs(x - 64) < (14 - dy * 0.4);
+const inLeftEar = (x - 64) < -12 && (x - 64) > -32 && dy > -4 && dy < 4 && Math.abs(dy - ((x - 64) + 12)*0.25) < 2.5;
+const inRightEar = (x - 64) > 12 && (x - 64) < 32 && dy > -4 && dy < 4 && Math.abs(dy - (-(x - 64) + 12)*0.25) < 2.5;
+const leftHornX = -7 - (dy - 12) * 0.25 + Math.sin(dy * 0.12) * 2;
+const isLeftHorn = dy >= 12 && dy <= 52 && Math.abs((x - 64) - leftHornX) < (2.5 - (dy - 12) * 0.04);
+const rightHornX = 7 + (dy - 12) * 0.25 - Math.sin(dy * 0.12) * 2;
+const isRightHorn = dy >= 12 && dy <= 52 && Math.abs((x - 64) - rightHornX) < (2.5 - (dy - 12) * 0.04);
+
+if (isLeftHorn || isRightHorn) {
+  r = 0; g = 240; b = 255;
+} else if (inFace || inLeftEar || inRightEar) {
+  r = 180; g = 185; b = 195;
+  const eyeL = Math.sqrt(((x - 64) + 5)*((x - 64) + 5) + (dy - 2)*(dy - 2)) < 2.0;
+  const eyeR = Math.sqrt(((x - 64) - 5)*((x - 64) - 5) + (dy - 2)*(dy - 2)) < 2.0;
+  if (eyeL || eyeR) {
+    r = 0; g = 255; b = 255;
+  }
+} else {
+  // Stamp and Card border
+  const isBorder = (dx === 22 && dy <= 32) || (dy === 32 && dx <= 22);
+  if (isBorder) {
+    r = 255; g = 0; b = 150;
+  } else if (dx < 22 && dy < 32) {
+    const dist = Math.sqrt((x-64)*(x-64) + (y-64)*(y-64));
+    const stampRadius = 5 + 12 * beatProgress;
+    if (Math.abs(dist - stampRadius) < 1.5) {
+      r = 235; g = 180; b = 45;
+    } else {
+      r = 10; g = 5; b = 20;
+    }
+  }
+}`
+};
+
 export function ShowEditor({
   show,
   dirty,
@@ -323,6 +611,67 @@ export function ShowEditor({
   const [previewPlaying, setPreviewPlaying] = useState(false);
   const [selectedClipId, setSelectedClipId] = useState<string | null>(() => show.tracks[0]?.clips[0]?.id ?? null);
   const [zoom, setZoom] = useState(0.9);
+  const [canvasDrag, setCanvasDrag] = useState<{
+    type: 'move' | 'resize' | 'rotate';
+    startX: number;
+    startY: number;
+    startClientX: number;
+    startClientY: number;
+    startWidth: number;
+    startHeight: number;
+    startRotation: number;
+  } | null>(null);
+
+  const startCanvasDrag = (
+    event: ReactPointerEvent<HTMLDivElement>,
+    type: 'move' | 'resize' | 'rotate',
+    state: ElementState
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setCanvasDrag({
+      type,
+      startX: state.x,
+      startY: state.y,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startWidth: state.width,
+      startHeight: state.height,
+      startRotation: state.rotation,
+    });
+  };
+
+  const handleCanvasPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!canvasDrag || !selection || selection.clip.kind !== 'element') return;
+    const container = event.currentTarget.getBoundingClientRect();
+    const containerWidth = container.width || 1;
+    const containerHeight = container.height || 1;
+    
+    const deltaX = ((event.clientX - canvasDrag.startClientX) / containerWidth) * 128;
+    const deltaY = -((event.clientY - canvasDrag.startClientY) / containerHeight) * 128;
+
+    if (canvasDrag.type === 'move') {
+      const nextX = Math.round(canvasDrag.startX + deltaX);
+      const nextY = Math.round(canvasDrag.startY + deltaY);
+      updateElement({ x: nextX, y: nextY });
+    } else if (canvasDrag.type === 'resize') {
+      const nextWidth = Math.max(2, Math.round(canvasDrag.startWidth + deltaX * 2));
+      const nextHeight = Math.max(2, Math.round(canvasDrag.startHeight + deltaY * 2));
+      updateElement({ width: nextWidth, height: nextHeight });
+    } else if (canvasDrag.type === 'rotate') {
+      const nextRotation = Math.round(canvasDrag.startRotation - deltaX * 1.5);
+      updateElement({ rotation: (nextRotation + 360) % 360 });
+    }
+  };
+
+  const handleCanvasPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (canvasDrag) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+      setCanvasDrag(null);
+    }
+  };
+
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [newProjectDraft, setNewProjectDraft] = useState<NewProjectDraft>({
@@ -425,6 +774,268 @@ export function ShowEditor({
       duplicatedId = duplicate.id;
     });
     if (duplicatedId) setSelectedClipId(duplicatedId);
+  };
+
+  const convertPatternToCustom = () => {
+    if (!selectedClipId) return;
+    applyMutation((next) => {
+      const selected = findSelection(next, selectedClipId);
+      if (selected && selected.clip.kind === 'pattern') {
+        const patternVal = selected.clip.pattern;
+        const code = LEGACY_PATTERN_CODES[patternVal] || `// Motif personnalisé\n\nr = 0; g = 0; b = 0;`;
+        selected.clip.pattern = 'custom';
+        (selected.clip as PatternClip).code = code;
+        selected.clip.name = `[Code] ${selected.clip.name}`;
+      }
+    });
+    onLog('Motif converti en script JS éditable.');
+  };
+
+  const convertPatternToElements = () => {
+    if (!selectedClipId) return;
+    applyMutation((next) => {
+      const selected = findSelection(next, selectedClipId);
+      if (!selected || selected.clip.kind !== 'pattern') return;
+      
+      const clip = selected.clip;
+      const track = selected.track;
+      
+      const start = clip.startFrame;
+      const end = clip.endFrame;
+      const duration = end - start;
+      
+      if (clip.pattern === 'laser_sweeps') {
+        const t1 = ensureTrack(next, { name: "Lasers (Rotatifs)", kind: "screen", target: "wall", color: "#ef3340", alwaysCreate: true });
+        const c1: ElementClip = {
+          id: createId('element-clip'),
+          name: "Laser Diagonal 1",
+          kind: 'element',
+          shape: 'rectangle',
+          startFrame: start,
+          endFrame: end,
+          timeMode: 'clip',
+          loop: { enabled: false, lengthFrames: duration },
+          keyframes: []
+        };
+        for (let f = start; f <= end; f += 10) {
+          const t = f / next.fps;
+          const progress = t < 3.0 ? Math.max(0, Math.min(1.0, (t + 4.3) / 7.3)) : Math.max(0, Math.min(1.0, (t - 32.0) / 8.0));
+          const sweepAngle = Math.round((t * (3.0 + progress * 5.0) * 180) / Math.PI);
+          c1.keyframes.push(createElementKeyframe(f - start, {
+            x: 64, y: 64, width: 140, height: 3, rotation: sweepAngle, opacity: 0.8, fill: "#00ffff"
+          }, 'linear'));
+        }
+        t1.clips.push(c1);
+
+        const c2: ElementClip = {
+          id: createId('element-clip'),
+          name: "Laser Diagonal 2",
+          kind: 'element',
+          shape: 'rectangle',
+          startFrame: start,
+          endFrame: end,
+          timeMode: 'clip',
+          loop: { enabled: false, lengthFrames: duration },
+          keyframes: []
+        };
+        for (let f = start; f <= end; f += 10) {
+          const t = f / next.fps;
+          const progress = t < 3.0 ? Math.max(0, Math.min(1.0, (t + 4.3) / 7.3)) : Math.max(0, Math.min(1.0, (t - 32.0) / 8.0));
+          const sweepAngle = Math.round((t * (3.0 + progress * 5.0) * 180) / Math.PI) + 90;
+          c2.keyframes.push(createElementKeyframe(f - start, {
+            x: 64, y: 64, width: 140, height: 3, rotation: sweepAngle, opacity: 0.8, fill: "#ff0096"
+          }, 'linear'));
+        }
+        t1.clips.push(c2);
+
+        const t2 = ensureTrack(next, { name: "Masque Lion", kind: "screen", target: "wall", color: "#f0b429", alwaysCreate: true });
+        const c3: ElementClip = {
+          id: createId('element-clip'),
+          name: "Crinière du Lion",
+          kind: 'element',
+          shape: 'ellipse',
+          startFrame: start,
+          endFrame: end,
+          timeMode: 'clip',
+          loop: { enabled: false, lengthFrames: duration },
+          keyframes: []
+        };
+        for (let f = start; f <= end; f += 15) {
+          const t = f / next.fps;
+          const bounce = Math.exp(-(((t + 0.1) % 0.4615) / 0.4615) * 4.0);
+          const size = Math.round(72 + 12 * bounce);
+          c3.keyframes.push(createElementKeyframe(f - start, {
+            x: 64, y: 64, width: size, height: size, rotation: 0, opacity: 1, fill: "#ff8200"
+          }, 'ease-in-out'));
+        }
+        t2.clips.push(c3);
+
+        const c4: ElementClip = {
+          id: createId('element-clip'),
+          name: "Visage du Lion",
+          kind: 'element',
+          shape: 'ellipse',
+          startFrame: start,
+          endFrame: end,
+          timeMode: 'clip',
+          loop: { enabled: false, lengthFrames: duration },
+          keyframes: []
+        };
+        for (let f = start; f <= end; f += 15) {
+          c4.keyframes.push(createElementKeyframe(f - start, {
+            x: 64, y: 64, width: 48, height: 48, rotation: 0, opacity: 1, fill: "#c8c8d2"
+          }, 'ease-in-out'));
+        }
+        t2.clips.push(c4);
+      }
+      else if (clip.pattern === 'reactive_drop') {
+        const t1 = ensureTrack(next, { name: "Chanteur COSMÓ", kind: "screen", target: "wall", color: "#28c2ff", alwaysCreate: true });
+        const c1: ElementClip = {
+          id: createId('element-clip'),
+          name: "Visage",
+          kind: 'element',
+          shape: 'ellipse',
+          startFrame: start,
+          endFrame: end,
+          timeMode: 'clip',
+          loop: { enabled: false, lengthFrames: duration },
+          keyframes: []
+        };
+        for (let f = start; f <= end; f += 20) {
+          c1.keyframes.push(createElementKeyframe(f - start, {
+            x: 64, y: 44, width: 34, height: 44, rotation: 0, opacity: 1, fill: "#f0be96"
+          }, 'ease-in-out'));
+        }
+        t1.clips.push(c1);
+
+        const c2: ElementClip = {
+          id: createId('element-clip'),
+          name: "Buste",
+          kind: 'element',
+          shape: 'rectangle',
+          startFrame: start,
+          endFrame: end,
+          timeMode: 'clip',
+          loop: { enabled: false, lengthFrames: duration },
+          keyframes: []
+        };
+        for (let f = start; f <= end; f += 20) {
+          c2.keyframes.push(createElementKeyframe(f - start, {
+            x: 64, y: 98, width: 50, height: 50, rotation: 0, opacity: 1, fill: "#0c917d"
+          }, 'ease-in-out'));
+        }
+        t1.clips.push(c2);
+
+        const t2 = ensureTrack(next, { name: "Oscillateurs (Haut/Bas)", kind: "screen", target: "wall", color: "#ef3340", alwaysCreate: true });
+        const c3: ElementClip = {
+          id: createId('element-clip'),
+          name: "Barre Oscillante Gauche",
+          kind: 'element',
+          shape: 'rectangle',
+          startFrame: start,
+          endFrame: end,
+          timeMode: 'clip',
+          loop: { enabled: false, lengthFrames: duration },
+          keyframes: []
+        };
+        for (let f = start; f <= end; f += 10) {
+          const t = f / next.fps;
+          const bounce = Math.exp(-(((t + 0.1) % 0.4615) / 0.4615) * 4.0);
+          const height = Math.round(20 + 40 * bounce);
+          c3.keyframes.push(createElementKeyframe(f - start, {
+            x: 20, y: 64, width: 12, height: height, rotation: 0, opacity: 0.9, fill: "#ff0096"
+          }, 'ease-in-out'));
+        }
+        t2.clips.push(c3);
+
+        const c4: ElementClip = {
+          id: createId('element-clip'),
+          name: "Barre Oscillante Droite",
+          kind: 'element',
+          shape: 'rectangle',
+          startFrame: start,
+          endFrame: end,
+          timeMode: 'clip',
+          loop: { enabled: false, lengthFrames: duration },
+          keyframes: []
+        };
+        for (let f = start; f <= end; f += 10) {
+          const t = f / next.fps;
+          const bounce = Math.exp(-(((t + 0.1) % 0.4615) / 0.4615) * 4.0);
+          const height = Math.round(20 + 40 * bounce);
+          c4.keyframes.push(createElementKeyframe(f - start, {
+            x: 108, y: 64, width: 12, height: height, rotation: 0, opacity: 0.9, fill: "#00ffff"
+          }, 'ease-in-out'));
+        }
+        t2.clips.push(c4);
+      }
+      else {
+        const t1 = ensureTrack(next, { name: "Rendu Décomposé", kind: "screen", target: "wall", color: "#28c2ff", alwaysCreate: true });
+        const c1: ElementClip = {
+          id: createId('element-clip'),
+          name: "Forme principale",
+          kind: 'element',
+          shape: 'ellipse',
+          startFrame: start,
+          endFrame: end,
+          timeMode: 'clip',
+          loop: { enabled: false, lengthFrames: duration },
+          keyframes: []
+        };
+        for (let f = start; f <= end; f += 10) {
+          const t = f / next.fps;
+          const size = Math.round(40 + 20 * Math.sin(t * 5));
+          c1.keyframes.push(createElementKeyframe(f - start, {
+            x: 64, y: 64, width: size, height: size, rotation: 0, opacity: 1, fill: "#00ffff"
+          }, 'ease-in-out'));
+        }
+        t1.clips.push(c1);
+      }
+      
+      track.clips = track.clips.filter((candidate) => candidate.id !== selectedClipId);
+    });
+    setSelectedClipId(null);
+    onLog('Motif décomposé en formes vectorielles éditables.');
+  };
+
+  const decomposePresetToKeyframes = () => {
+    if (!selectedClipId) return;
+    applyMutation((next) => {
+      const selected = findSelection(next, selectedClipId);
+      if (!selected) return;
+      
+      const clip = selected.clip;
+       if (clip.kind === 'fixture' && clip.preset) {
+        const keyframes: FixtureKeyframe[] = [];
+        // Generate keyframes every 5 frames
+        for (let frame = clip.startFrame; frame <= clip.endFrame; frame += 5) {
+          const state = getFixtureStateAtFrame(clip, next, frame, 0);
+          keyframes.push(createFixtureKeyframe(frame - clip.startFrame, state, 'linear'));
+        }
+        if ((clip.endFrame - clip.startFrame) % 5 !== 0) {
+          const state = getFixtureStateAtFrame(clip, next, clip.endFrame, 0);
+          keyframes.push(createFixtureKeyframe(clip.endFrame - clip.startFrame, state, 'linear'));
+        }
+        clip.keyframes = keyframes;
+        clip.preset = undefined;
+        clip.name = `[Keyframes] ${clip.name}`;
+      } else if (clip.kind === 'projector' && clip.preset) {
+        const keyframes: ProjectorKeyframe[] = [];
+        // Generate keyframes every 5 frames
+        for (let frame = clip.startFrame; frame <= clip.endFrame; frame += 5) {
+          const state = getProjectorStateAtFrame(clip, frame);
+          keyframes.push(createProjectorKeyframe(frame - clip.startFrame, state, 'linear'));
+        }
+        if ((clip.endFrame - clip.startFrame) % 5 !== 0) {
+          const state = getProjectorStateAtFrame(clip, clip.endFrame);
+          keyframes.push(createProjectorKeyframe(clip.endFrame - clip.startFrame, state, 'linear'));
+        }
+        clip.keyframes = keyframes;
+        clip.preset = undefined;
+        clip.name = `[Keyframes] ${clip.name}`;
+      }
+    });
+    onLog('Preset décomposé en keyframes éditables.');
   };
 
   const setTrackProperty = (trackId: string, property: 'muted' | 'locked', value: boolean) => {
@@ -1076,6 +1687,35 @@ export function ShowEditor({
               <canvas ref={canvasRef} data-testid="stage-canvas" width={64} height={64} />
               <div className="se-pixel-grid" />
               <span className="se-screen-tag">LED WALL / PROGRAM</span>
+              {selection?.clip.kind === 'element' && selectedElementState && (
+                <div
+                  className="se-canvas-interactive-area"
+                  onPointerMove={handleCanvasPointerMove}
+                  onPointerUp={handleCanvasPointerUp}
+                >
+                  <div
+                    className="se-canvas-bounding-box"
+                    style={{
+                      left: `${((selectedElementState.x - selectedElementState.width / 2) / 128) * 100}%`,
+                      top: `${((128 - (selectedElementState.y + selectedElementState.height / 2)) / 128) * 100}%`,
+                      width: `${(selectedElementState.width / 128) * 100}%`,
+                      height: `${(selectedElementState.height / 128) * 100}%`,
+                      transform: `rotate(${selectedElementState.rotation}deg)`,
+                      borderRadius: selection.clip.shape === 'ellipse' ? '50%' : '0px',
+                    }}
+                    onPointerDown={(event) => startCanvasDrag(event, 'move', selectedElementState)}
+                  >
+                    <div
+                      className="se-canvas-handle-rotate"
+                      onPointerDown={(event) => startCanvasDrag(event, 'rotate', selectedElementState)}
+                    />
+                    <div
+                      className="se-canvas-handle-br"
+                      onPointerDown={(event) => startCanvasDrag(event, 'resize', selectedElementState)}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="se-fixture-rig" aria-label="Aperçu des quatre lyres">
@@ -1266,6 +1906,16 @@ export function ShowEditor({
                       />
                     </label>
                   )}
+                  {selection.clip.pattern !== 'custom' && (
+                    <>
+                      <button className="se-action-button" onClick={convertPatternToElements}>
+                        <Sparkles size={13} /> Décomposer en formes éditables
+                      </button>
+                      <button className="se-action-button" style={{ opacity: 0.6, fontSize: '0.58rem' }} onClick={convertPatternToCustom}>
+                        <Sparkles size={11} /> Convertir en code JS
+                      </button>
+                    </>
+                  )}
                   <div className="se-legacy-note">
                     <Radio size={14} /> Ce générateur est évalué à chaque frame, sans rendu vidéo pré-calculé.
                   </div>
@@ -1356,6 +2006,11 @@ export function ShowEditor({
                     <NumberField label="Strobe" value={selectedFixtureState.strobe} min={0} max={255} onChange={(value) => updateFixture({ strobe: value })} />
                     <NumberField label="Roue couleur" value={selectedFixtureState.colorWheel} min={0} max={255} onChange={(value) => updateFixture({ colorWheel: value })} />
                   </div>
+                  {selection.clip.preset && (
+                    <button className="se-action-button" onClick={decomposePresetToKeyframes}>
+                      <Diamond size={13} /> Décomposer en keyframes éditables
+                    </button>
+                  )}
                   <div className="se-keyframe-count"><Diamond size={11} /> {selection.clip.keyframes.length} keyframe(s) · valeurs DMX 0–255</div>
                 </div>
               )}
@@ -1392,6 +2047,11 @@ export function ShowEditor({
                     <NumberField label="Blanc" value={selectedProjectorState.white} min={0} max={255} onChange={(value) => updateProjector({ white: value })} />
                     <NumberField label="Intensité" value={selectedProjectorState.intensity} min={0} max={255} onChange={(value) => updateProjector({ intensity: value })} />
                   </div>
+                  {selection.clip.preset && (
+                    <button className="se-action-button" onClick={decomposePresetToKeyframes}>
+                      <Diamond size={13} /> Décomposer en keyframes éditables
+                    </button>
+                  )}
                   <div className="se-keyframe-count"><Diamond size={11} /> {selection.clip.keyframes.length} keyframe(s) · sortie RGBW</div>
                 </div>
               )}
