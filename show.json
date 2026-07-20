@@ -1,0 +1,215 @@
+{
+  "duration": 45,
+  "blocks": [
+    {
+      "id": "17",
+      "lane": "lyres",
+      "startTime": 0,
+      "endTime": 3,
+      "type": "lyre_buildup_strobe",
+      "name": "Lyres Strobe Crescendo",
+      "params": {
+        "intensity": 1,
+        "color": "#ffffff",
+        "speed": 1,
+        "strobe": 0
+      }
+    },
+    {
+      "id": "18",
+      "lane": "static",
+      "startTime": 0,
+      "endTime": 3,
+      "type": "static_dimmer_rise",
+      "name": "Spot Dimmer Rise",
+      "params": {
+        "intensity": 1,
+        "color": "#ffffff",
+        "speed": 1,
+        "strobe": 0
+      }
+    },
+    {
+      "id": "16",
+      "lane": "wall",
+      "startTime": 0,
+      "endTime": 3,
+      "type": "laser_sweeps",
+      "name": "Tanzschein Laser Sweeps",
+      "params": {
+        "intensity": 1,
+        "color": "#ffffff",
+        "speed": 1,
+        "strobe": 0
+      }
+    },
+    {
+      "id": "20",
+      "lane": "lyres",
+      "startTime": 3,
+      "endTime": 26,
+      "type": "lyre_drop_trap",
+      "name": "Lyres Mirror Trap Chases",
+      "params": {
+        "intensity": 1,
+        "color": "#ffffff",
+        "speed": 1,
+        "strobe": 0
+      }
+    },
+    {
+      "id": "21",
+      "lane": "static",
+      "startTime": 3,
+      "endTime": 26,
+      "type": "static_drop_strobe",
+      "name": "Spot Strobe Drop",
+      "params": {
+        "intensity": 1,
+        "color": "#ffffff",
+        "speed": 1,
+        "strobe": 0
+      }
+    },
+    {
+      "id": "19",
+      "lane": "wall",
+      "startTime": 3,
+      "endTime": 26,
+      "type": "reactive_drop",
+      "name": "Tanzschein Chorus Drop",
+      "params": {
+        "intensity": 1,
+        "color": "#ffffff",
+        "speed": 1,
+        "strobe": 0
+      }
+    },
+    {
+      "id": "26",
+      "lane": "lyres",
+      "startTime": 26,
+      "endTime": 32,
+      "type": "lyre_circle_color",
+      "name": "Lyres Color Circular",
+      "params": {
+        "intensity": 1,
+        "color": "#ffffff",
+        "speed": 1,
+        "strobe": 0
+      }
+    },
+    {
+      "id": "27",
+      "lane": "static",
+      "startTime": 26,
+      "endTime": 32,
+      "type": "static_snare_flash",
+      "name": "Spot Magenta Snare Flash",
+      "params": {
+        "intensity": 1,
+        "color": "#ffffff",
+        "speed": 1,
+        "strobe": 0
+      }
+    },
+    {
+      "id": "25",
+      "lane": "wall",
+      "startTime": 26,
+      "endTime": 32,
+      "type": "quadrant_flashes",
+      "name": "Quadrant Controller Flash",
+      "params": {
+        "intensity": 1,
+        "color": "#ffffff",
+        "speed": 1,
+        "strobe": 0
+      }
+    },
+    {
+      "id": "29",
+      "lane": "lyres",
+      "startTime": 32,
+      "endTime": 40,
+      "type": "lyre_buildup_strobe",
+      "name": "Lyres Strobe Crescendo 2",
+      "params": {
+        "intensity": 1,
+        "color": "#ffffff",
+        "speed": 1,
+        "strobe": 0
+      }
+    },
+    {
+      "id": "30",
+      "lane": "static",
+      "startTime": 32,
+      "endTime": 40,
+      "type": "static_dimmer_rise",
+      "name": "Spot Dimmer Rise 2",
+      "params": {
+        "intensity": 1,
+        "color": "#ffffff",
+        "speed": 1,
+        "strobe": 0
+      }
+    },
+    {
+      "id": "28",
+      "lane": "wall",
+      "startTime": 32,
+      "endTime": 40,
+      "type": "laser_sweeps",
+      "name": "Tanzschein Laser Sweeps 2",
+      "params": {
+        "intensity": 1,
+        "color": "#ffffff",
+        "speed": 1,
+        "strobe": 0
+      }
+    },
+    {
+      "id": "32",
+      "lane": "lyres",
+      "startTime": 40,
+      "endTime": 45,
+      "type": "lyre_drop_trap",
+      "name": "Lyres Mirror Trap Chases 2",
+      "params": {
+        "intensity": 1,
+        "color": "#ffffff",
+        "speed": 1,
+        "strobe": 0
+      }
+    },
+    {
+      "id": "33",
+      "lane": "static",
+      "startTime": 40,
+      "endTime": 45,
+      "type": "static_drop_strobe",
+      "name": "Spot Strobe Drop 2",
+      "params": {
+        "intensity": 1,
+        "color": "#ffffff",
+        "speed": 1,
+        "strobe": 0
+      }
+    },
+    {
+      "id": "31",
+      "lane": "wall",
+      "startTime": 40,
+      "endTime": 45,
+      "type": "reactive_drop",
+      "name": "Tanzschein Chorus Drop 2",
+      "params": {
+        "intensity": 1,
+        "color": "#ffffff",
+        "speed": 1,
+        "strobe": 0
+      }
+    }
+  ]
+}

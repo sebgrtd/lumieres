@@ -252,6 +252,7 @@ export default function App() {
   // Keyboard Overrides Sender (P6 Interactivity)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (activeTab === 'timeline') return;
       const code = e.code.toLowerCase();
       let keyToSend = null;
       if (code === 'space') {
@@ -296,7 +297,7 @@ export default function App() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [interactiveOverride]);
+  }, [activeTab, interactiveOverride]);
 
   // Keep currentTime ref updated to avoid effect re-triggering during playback
   useEffect(() => {

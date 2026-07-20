@@ -9,7 +9,8 @@
     "source": "file",
     "preset": null,
     "path": "/tanzschein.mp3",
-    "bpm": 130
+    "bpm": 130,
+    "durationFrames": 1800
   },
   "tracks": [
     {
@@ -23,53 +24,151 @@
       "clips": [
         {
           "id": "16",
-          "name": "Tanzschein Laser Sweeps",
+          "name": "Plan 01 — Portrait COSMÓ",
           "kind": "pattern",
-          "pattern": "laser_sweeps",
+          "pattern": "cosmo_singer_intro",
           "startFrame": 0,
-          "endFrame": 120,
+          "endFrame": 367,
           "timeMode": "show",
-          "loop": { "enabled": false, "lengthFrames": 120 }
+          "loop": { "enabled": false, "lengthFrames": 368 }
         },
         {
           "id": "19",
-          "name": "Tanzschein Chorus Drop",
+          "name": "Plan 02A — HEY / HEY!",
           "kind": "pattern",
-          "pattern": "reactive_drop",
-          "startFrame": 120,
-          "endFrame": 1040,
+          "pattern": "reactive_drop_text",
+          "startFrame": 368,
+          "endFrame": 433,
           "timeMode": "show",
-          "loop": { "enabled": false, "lengthFrames": 920 }
+          "loop": { "enabled": false, "lengthFrames": 66 }
+        },
+        {
+          "id": "19-character-1",
+          "name": "Plan 02B — Personnage COSMÓ",
+          "kind": "pattern",
+          "pattern": "reactive_drop_character",
+          "startFrame": 434,
+          "endFrame": 663,
+          "timeMode": "show",
+          "loop": { "enabled": false, "lengthFrames": 230 }
+        },
+        {
+          "id": "19-text-2",
+          "name": "Plan 02C — HEY / HEY!",
+          "kind": "pattern",
+          "pattern": "reactive_drop_text",
+          "startFrame": 664,
+          "endFrame": 729,
+          "timeMode": "show",
+          "loop": { "enabled": false, "lengthFrames": 66 }
+        },
+        {
+          "id": "19-character-2",
+          "name": "Plan 02D — Personnage COSMÓ",
+          "kind": "pattern",
+          "pattern": "reactive_drop_character",
+          "startFrame": 730,
+          "endFrame": 933,
+          "timeMode": "show",
+          "loop": { "enabled": false, "lengthFrames": 204 }
         },
         {
           "id": "25",
-          "name": "Quadrant Controller Flash",
+          "name": "Plan 03A — TANZ / SCHEIN",
           "kind": "pattern",
-          "pattern": "quadrant_flashes",
-          "startFrame": 1040,
-          "endFrame": 1280,
+          "pattern": "quadrant_flashes_no_mask",
+          "startFrame": 934,
+          "endFrame": 999,
           "timeMode": "show",
-          "loop": { "enabled": false, "lengthFrames": 240 }
+          "loop": { "enabled": false, "lengthFrames": 66 },
+          "lyrics": { "lines": ["TANZ", "SCHEIN"], "cueStartTime": 23.35, "accent": "#00ffff" }
+        },
+        {
+          "id": "25-2",
+          "name": "Plan 03B — STRENG / SEIN",
+          "kind": "pattern",
+          "pattern": "quadrant_flashes_no_mask",
+          "startFrame": 1000,
+          "endFrame": 1093,
+          "timeMode": "show",
+          "loop": { "enabled": false, "lengthFrames": 94 },
+          "lyrics": { "lines": ["STRENG", "SEIN"], "cueStartTime": 25, "accent": "#ff0096" }
+        },
+        {
+          "id": "25-3",
+          "name": "Plan 03C — TANZ / SCHEIN",
+          "kind": "pattern",
+          "pattern": "quadrant_flashes_no_mask",
+          "startFrame": 1094,
+          "endFrame": 1181,
+          "timeMode": "show",
+          "loop": { "enabled": false, "lengthFrames": 88 },
+          "lyrics": { "lines": ["TANZ", "SCHEIN"], "cueStartTime": 27.35, "accent": "#ebb42d" }
+        },
+        {
+          "id": "25-4",
+          "name": "Plan 03D — NICHT / REIN",
+          "kind": "pattern",
+          "pattern": "quadrant_flashes_no_mask",
+          "startFrame": 1182,
+          "endFrame": 1237,
+          "timeMode": "show",
+          "loop": { "enabled": false, "lengthFrames": 56 },
+          "lyrics": { "lines": ["NICHT", "REIN"], "cueStartTime": 29.55, "accent": "#00ffff" }
+        },
+        {
+          "id": "25-5",
+          "name": "Plan 03E — TANZ / SCHEIN",
+          "kind": "pattern",
+          "pattern": "quadrant_flashes_no_mask",
+          "startFrame": 1238,
+          "endFrame": 1325,
+          "timeMode": "show",
+          "loop": { "enabled": false, "lengthFrames": 88 },
+          "lyrics": { "lines": ["TANZ", "SCHEIN"], "cueStartTime": 30.95, "accent": "#ff0096" }
+        },
+        {
+          "id": "25-6",
+          "name": "Plan 03F — WITZ / SEIN",
+          "kind": "pattern",
+          "pattern": "quadrant_flashes_no_mask",
+          "startFrame": 1326,
+          "endFrame": 1389,
+          "timeMode": "show",
+          "loop": { "enabled": false, "lengthFrames": 64 },
+          "lyrics": { "lines": ["WITZ", "SEIN"], "cueStartTime": 33.15, "accent": "#ebb42d" }
+        },
+        {
+          "id": "25-7",
+          "name": "Plan 03G — TANZ / SCHEIN",
+          "kind": "pattern",
+          "pattern": "quadrant_flashes_no_mask",
+          "startFrame": 1390,
+          "endFrame": 1481,
+          "timeMode": "show",
+          "loop": { "enabled": false, "lengthFrames": 92 },
+          "lyrics": { "lines": ["TANZ", "SCHEIN"], "cueStartTime": 34.75, "accent": "#00ffff" }
+        },
+        {
+          "id": "25-8",
+          "name": "Plan 03H — NICHT / REIN",
+          "kind": "pattern",
+          "pattern": "quadrant_flashes_no_mask",
+          "startFrame": 1482,
+          "endFrame": 1563,
+          "timeMode": "show",
+          "loop": { "enabled": false, "lengthFrames": 82 },
+          "lyrics": { "lines": ["NICHT", "REIN"], "cueStartTime": 37.05, "accent": "#ff0096" }
         },
         {
           "id": "28",
-          "name": "Tanzschein Laser Sweeps 2",
+          "name": "Plan 04 — Final lasers",
           "kind": "pattern",
           "pattern": "laser_sweeps",
-          "startFrame": 1280,
-          "endFrame": 1600,
-          "timeMode": "show",
-          "loop": { "enabled": false, "lengthFrames": 320 }
-        },
-        {
-          "id": "31",
-          "name": "Tanzschein Chorus Drop 2",
-          "kind": "pattern",
-          "pattern": "reactive_drop",
-          "startFrame": 1600,
+          "startFrame": 1564,
           "endFrame": 1800,
           "timeMode": "show",
-          "loop": { "enabled": false, "lengthFrames": 200 }
+          "loop": { "enabled": false, "lengthFrames": 236 }
         }
       ]
     },

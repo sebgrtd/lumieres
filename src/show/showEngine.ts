@@ -336,7 +336,13 @@ function evaluatePattern(clip: PatternClip, show: ShowDocument, frame: number, x
   const beatInMeasure = beatIdx % 4;
   const measureIdx = Math.floor(beatIdx / 4);
 
-  const renderType = getWallRenderType(clip.pattern, time);
+  // Each timeline clip now names the exact shot it renders. Legacy shows
+  // without explicit shots keep their historical time-based redirection.
+  const renderType = clip.pattern === 'reactive_drop_text' || clip.pattern === 'reactive_drop_character'
+    ? 'reactive_drop'
+    : clip.pattern === 'cosmo_singer_intro' || clip.pattern === 'quadrant_flashes_no_mask'
+      ? clip.pattern
+      : getWallRenderType(clip.pattern, time);
 
   let r = 0;
   let g = 0;
@@ -503,17 +509,29 @@ function evaluatePattern(clip: PatternClip, show: ShowDocument, frame: number, x
     if (inRibbon) {
       let inText = false;
       const scale = 3;
-      const heyCue = getHeyCueAtTime(time);
+      const timelineHeyCue = getHeyCueAtTime(time);
+      const heyCue = clip.pattern === 'reactive_drop_character'
+        ? null
+        : clip.pattern === 'reactive_drop_text'
+          ? timelineHeyCue ?? {
+            startTime: clip.startFrame / show.fps,
+            endTime: (clip.endFrame + 1) / show.fps,
+            lines: ['HEY', 'HEY'],
+            kind: 'hey' as const,
+          }
+          : timelineHeyCue;
       let heyOpacity = 1;
 
       if (heyCue) {
         const t1 = time - heyCue.startTime;
         const t2 = time - (heyCue.startTime + 0.7);
         heyOpacity = Math.max(0, Math.min(1, (heyCue.endTime - time) / 0.5));
-        const inText1 = isPixelInText("HEY", x, y, 32, t1 < 0.25 ? Math.round(-80 + 112 * (t1 / 0.25)) : 32, scale, 7);
+        const startX1 = t1 < 0.25 ? Math.round(-80 + 112 * (t1 / 0.25)) : 32;
+        const inText1 = isPixelInText("HEY", x, y, startX1, 88, scale, 7);
         let inText2 = false;
         if (t2 >= 0) {
-          inText2 = isPixelInText("HEY!", x, y, 32, t2 < 0.25 ? Math.round(128 - 96 * (t2 / 0.25)) : 32, scale, 7);
+          const startX2 = t2 < 0.25 ? Math.round(128 - 96 * (t2 / 0.25)) : 32;
+          inText2 = isPixelInText("HEY!", x, y, startX2, 62, scale, 7);
         }
         inText = inText1 || inText2;
       }
@@ -557,7 +575,8 @@ function evaluatePattern(clip: PatternClip, show: ShowDocument, frame: number, x
       }
     }
 
-    const showSinger = (time >= 10.85 && time < 16.6) || (time >= 18.25 && time < 26.0);
+    const showSinger = clip.pattern === 'reactive_drop_character'
+      || (clip.pattern !== 'reactive_drop_text' && ((time >= 10.85 && time < 16.6) || (time >= 18.25 && time < 26.0)));
     if (showSinger) {
       const singer = getSingerPixelColor(x, y, time, beatProgress, beatIdx, 22, 24);
       if (singer) {
@@ -623,11 +642,19 @@ function evaluatePattern(clip: PatternClip, show: ShowDocument, frame: number, x
     r = Math.round(r * intensity);
     g = Math.round(g * intensity);
     b = Math.round(b * intensity);
+    const tint = parseHexColor(clip.effectParams.color ?? '#ffffff');
+    r = Math.round(r * tint[0] / 255);
+    g = Math.round(g * tint[1] / 255);
+    b = Math.round(b * tint[2] / 255);
   }
 
   // Lyrics overlay and fade scale only apply to legacy redirectable patterns
-  if (REDIRECTABLE_PATTERNS.has(clip.pattern)) {
-    const lyricOverlay = getFinalLyricOverlayPixel(time, x, y, beatIdx);
+  if (REDIRECTABLE_PATTERNS.has(clip.pattern)
+    || clip.pattern === 'cosmo_singer_intro'
+    || clip.pattern === 'quadrant_flashes_no_mask'
+    || clip.pattern === 'reactive_drop_text'
+    || clip.pattern === 'reactive_drop_character') {
+    const lyricOverlay = getFinalLyricOverlayPixel(time, x, y, beatIdx, clip.lyrics);
     if (lyricOverlay) {
       r = lyricOverlay.r;
       g = lyricOverlay.g;
@@ -870,8 +897,16 @@ function isPixelInSequentialLyric(lines: readonly string[], x: number, y: number
   });
 }
 
-function getFinalLyricOverlayPixel(time: number, x: number, y: number, beatIdx: number): { r: number; g: number; b: number } | null {
-  const cue = getTextLyricCueAtTime(time);
+function getFinalLyricOverlayPixel(
+  time: number,
+  x: number,
+  y: number,
+  beatIdx: number,
+  override?: PatternClip['lyrics'],
+): { r: number; g: number; b: number } | null {
+  const cue = override
+    ? { startTime: override.cueStartTime, endTime: Number.POSITIVE_INFINITY, lines: override.lines }
+    : getTextLyricCueAtTime(time);
   if (!cue) return null;
 
   const elapsed = time - cue.startTime;
@@ -879,7 +914,7 @@ function getFinalLyricOverlayPixel(time: number, x: number, y: number, beatIdx: 
   const bandBottom = 95;
   if (y < bandTop || y > bandBottom) return null;
 
-  const accent = getLyricAccentAtTime(time);
+  const accent = override ? parseHexColor(override.accent) : getLyricAccentAtTime(time);
   const invertActive = beatIdx % 2 === 0;
   const inText = isPixelInSequentialLyric(cue.lines, x, y, 3, elapsed);
 

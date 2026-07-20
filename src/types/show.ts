@@ -6,7 +6,8 @@ export type Easing = 'linear' | 'ease-in-out' | 'hold';
 export type PatternName =
   | 'radial_ripple' | 'gradient_sweep' | 'strobe_flash' | 'equalizer' | 'solid'
   | 'black' | 'guitar_intro' | 'intro_ticks' | 'blue_star_burst'
-  | 'quadrant_flashes' | 'laser_sweeps' | 'reactive_drop'
+  | 'cosmo_singer_intro' | 'quadrant_flashes' | 'quadrant_flashes_no_mask'
+  | 'laser_sweeps' | 'reactive_drop' | 'reactive_drop_text' | 'reactive_drop_character'
   | 'custom';
 export type FixturePreset =
   | 'lyre_waltz' | 'lyre_rise' | 'lyre_trap'
@@ -47,6 +48,7 @@ export type ShowAudio =
       preset: null;
       path: string;
       bpm: number;
+      durationFrames?: number;
     };
 
 export interface BaseClip {
@@ -64,6 +66,11 @@ export interface PatternClip extends BaseClip {
   pattern: PatternName;
   color?: string;
   code?: string;
+  lyrics?: {
+    lines: [string, string];
+    cueStartTime: number;
+    accent: string;
+  };
 }
 
 export interface ElementState {
@@ -220,6 +227,7 @@ export function isShowDocument(value: unknown): value is ShowDocument {
     if (value.audio.preset !== 'austrian-lacrimosa') return false;
   } else if (value.audio.source === 'file') {
     if (value.audio.preset !== null || typeof value.audio.path !== 'string') return false;
+    if (value.audio.durationFrames !== undefined && (!Number.isInteger(value.audio.durationFrames) || Number(value.audio.durationFrames) <= 0)) return false;
   } else {
     return false;
   }
@@ -231,7 +239,8 @@ export function isShowDocument(value: unknown): value is ShowDocument {
   const patterns: PatternName[] = [
     'radial_ripple', 'gradient_sweep', 'strobe_flash', 'equalizer', 'solid',
     'black', 'guitar_intro', 'intro_ticks', 'blue_star_burst',
-    'quadrant_flashes', 'laser_sweeps', 'reactive_drop',
+    'cosmo_singer_intro', 'quadrant_flashes', 'quadrant_flashes_no_mask',
+    'laser_sweeps', 'reactive_drop', 'reactive_drop_text', 'reactive_drop_character',
     'custom',
   ];
   const fixturePresets: FixturePreset[] = [
@@ -260,7 +269,13 @@ export function isShowDocument(value: unknown): value is ShowDocument {
       if (clip.kind === 'pattern') {
         if (track.kind !== 'screen' || !patterns.includes(clip.pattern as PatternName)) return false;
         if (clip.color !== undefined && typeof clip.color !== 'string') return false;
-        return clip.code === undefined || typeof clip.code === 'string';
+        if (clip.code !== undefined && typeof clip.code !== 'string') return false;
+        if (clip.lyrics !== undefined) {
+          if (!isRecord(clip.lyrics) || !Array.isArray(clip.lyrics.lines) || clip.lyrics.lines.length !== 2) return false;
+          if (!clip.lyrics.lines.every((line) => typeof line === 'string')) return false;
+          if (!isFiniteNumber(clip.lyrics.cueStartTime) || typeof clip.lyrics.accent !== 'string') return false;
+        }
+        return true;
       }
 
       if (clip.kind === 'element') {

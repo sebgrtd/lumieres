@@ -126,9 +126,13 @@ const PATTERN_LABELS: Record<PatternClip['pattern'], string> = {
   guitar_intro: 'Intro guitare COSMÓ',
   intro_ticks: 'Ticks intro COSMÓ',
   blue_star_burst: 'Étoile COSMÓ',
+  cosmo_singer_intro: 'Portrait COSMÓ',
   quadrant_flashes: 'Flash quadrants',
+  quadrant_flashes_no_mask: 'Refrain quadrants + paroles',
   laser_sweeps: 'Lasers Tanzschein',
   reactive_drop: 'Drop Tanzschein',
+  reactive_drop_text: 'Drop — texte HEY',
+  reactive_drop_character: 'Drop — personnage COSMÓ',
   custom: 'Motif personnalisé (JS)',
 };
 
@@ -733,7 +737,15 @@ export function ShowEditor({
 
   const applyMutation = (mutate: (next: ShowDocument) => void) => {
     const next = cloneShow(showRef.current);
+    const previousDuration = next.durationFrames;
     mutate(next);
+    const furthestClipFrame = next.tracks.reduce((furthest, track) => (
+      track.clips.reduce((trackFurthest, clip) => Math.max(trackFurthest, clip.endFrame), furthest)
+    ), 0);
+    next.durationFrames = Math.max(next.durationFrames, furthestClipFrame);
+    if (next.audio.source === 'file' && next.audio.durationFrames === undefined && next.durationFrames > previousDuration) {
+      next.audio.durationFrames = previousDuration;
+    }
     showRef.current = next;
     onChange(next);
   };
@@ -757,6 +769,15 @@ export function ShowEditor({
     onLog('Clip supprimé de la timeline.');
   };
 
+  const togglePreviewPlayback = () => {
+    if (serverPlaying) {
+      onStopLive();
+      setPreviewPlaying(true);
+      return;
+    }
+    setPreviewPlaying((playing) => !playing);
+  };
+
   const duplicateSelectedClip = () => {
     if (!selection) return;
     const sourceId = selection.clip.id;
@@ -768,12 +789,34 @@ export function ShowEditor({
       const duration = duplicate.endFrame - duplicate.startFrame;
       duplicate.id = createId(`${duplicate.kind}-clip`);
       duplicate.name = `${duplicate.name} — copie`;
-      duplicate.startFrame = Math.min(next.durationFrames, duplicate.startFrame + next.fps);
-      duplicate.endFrame = Math.min(next.durationFrames, duplicate.startFrame + duration);
+      duplicate.startFrame += next.fps;
+      duplicate.endFrame = duplicate.startFrame + duration;
       selected.track.clips.push(duplicate);
       duplicatedId = duplicate.id;
     });
     if (duplicatedId) setSelectedClipId(duplicatedId);
+  };
+
+  const splitSelectedClipAtPlayhead = () => {
+    if (!selection || playheadFrame <= selection.clip.startFrame || playheadFrame > selection.clip.endFrame) return;
+    const sourceId = selection.clip.id;
+    let rightId: string | null = null;
+    applyMutation((next) => {
+      const selected = findSelection(next, sourceId);
+      if (!selected) return;
+      const right = structuredClone(selected.clip);
+      right.id = createId(`${right.kind}-clip`);
+      right.name = `${right.name} — suite`;
+      right.startFrame = playheadFrame;
+      right.loop.lengthFrames = Math.max(1, right.endFrame - right.startFrame + 1);
+      selected.clip.endFrame = playheadFrame - 1;
+      selected.clip.loop.lengthFrames = Math.max(1, selected.clip.endFrame - selected.clip.startFrame + 1);
+      selected.track.clips.push(right);
+      selected.track.clips.sort((left, candidate) => left.startFrame - candidate.startFrame);
+      rightId = right.id;
+    });
+    if (rightId) setSelectedClipId(rightId);
+    onLog(`Plan coupé à la frame ${playheadFrame}.`);
   };
 
   const convertPatternToCustom = () => {
@@ -798,7 +841,6 @@ export function ShowEditor({
       if (!selected || selected.clip.kind !== 'pattern') return;
       
       const clip = selected.clip;
-      const track = selected.track;
       
       const start = clip.startFrame;
       const end = clip.endFrame;
@@ -806,6 +848,7 @@ export function ShowEditor({
       
       if (clip.pattern === 'laser_sweeps') {
         const t1 = ensureTrack(next, { name: "Lasers (Rotatifs)", kind: "screen", target: "wall", color: "#ef3340", alwaysCreate: true });
+        t1.muted = true;
         const c1: ElementClip = {
           id: createId('element-clip'),
           name: "Laser Diagonal 1",
@@ -849,6 +892,7 @@ export function ShowEditor({
         t1.clips.push(c2);
 
         const t2 = ensureTrack(next, { name: "Masque Lion", kind: "screen", target: "wall", color: "#f0b429", alwaysCreate: true });
+        t2.muted = true;
         const c3: ElementClip = {
           id: createId('element-clip'),
           name: "Crinière du Lion",
@@ -890,6 +934,7 @@ export function ShowEditor({
       }
       else if (clip.pattern === 'reactive_drop') {
         const t1 = ensureTrack(next, { name: "Chanteur COSMÓ", kind: "screen", target: "wall", color: "#28c2ff", alwaysCreate: true });
+        t1.muted = true;
         const c1: ElementClip = {
           id: createId('element-clip'),
           name: "Visage",
@@ -927,6 +972,7 @@ export function ShowEditor({
         t1.clips.push(c2);
 
         const t2 = ensureTrack(next, { name: "Oscillateurs (Haut/Bas)", kind: "screen", target: "wall", color: "#ef3340", alwaysCreate: true });
+        t2.muted = true;
         const c3: ElementClip = {
           id: createId('element-clip'),
           name: "Barre Oscillante Gauche",
@@ -971,6 +1017,7 @@ export function ShowEditor({
       }
       else {
         const t1 = ensureTrack(next, { name: "Rendu Décomposé", kind: "screen", target: "wall", color: "#28c2ff", alwaysCreate: true });
+        t1.muted = true;
         const c1: ElementClip = {
           id: createId('element-clip'),
           name: "Forme principale",
@@ -992,10 +1039,8 @@ export function ShowEditor({
         t1.clips.push(c1);
       }
       
-      track.clips = track.clips.filter((candidate) => candidate.id !== selectedClipId);
     });
-    setSelectedClipId(null);
-    onLog('Motif décomposé en formes vectorielles éditables.');
+    onLog('Copie décomposée ajoutée sur des pistes masquées. Le plan source est conservé.');
   };
 
   const decomposePresetToKeyframes = () => {
@@ -1045,6 +1090,17 @@ export function ShowEditor({
     });
   };
 
+  const removeTrack = (trackId: string) => {
+    const track = show.tracks.find((candidate) => candidate.id === trackId);
+    if (!track) return;
+    const clearsSelection = track.clips.some((clip) => clip.id === selectedClipId);
+    applyMutation((next) => {
+      next.tracks = next.tracks.filter((candidate) => candidate.id !== trackId);
+    });
+    if (clearsSelection) setSelectedClipId(null);
+    onLog(`Piste supprimée : ${track.name}.`);
+  };
+
   const createNewProject = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const fps = Math.max(1, Math.min(240, Math.round(newProjectDraft.fps)));
@@ -1066,8 +1122,8 @@ export function ShowEditor({
   };
 
   const clipWindow = (seconds: number) => {
-    const startFrame = Math.min(playheadFrame, Math.max(0, show.durationFrames - 1));
-    const endFrame = Math.min(show.durationFrames, startFrame + Math.max(1, Math.round(seconds * show.fps)));
+    const startFrame = Math.max(0, playheadFrame);
+    const endFrame = startFrame + Math.max(1, Math.round(seconds * show.fps));
     return { startFrame, endFrame };
   };
 
@@ -1415,12 +1471,12 @@ export function ShowEditor({
 
       if (dragState.mode === 'move') {
         const duration = dragState.endFrame - dragState.startFrame;
-        startFrame = Math.max(0, Math.min(showRef.current.durationFrames - duration, dragState.startFrame + delta));
+        startFrame = Math.max(0, dragState.startFrame + delta);
         endFrame = startFrame + duration;
       } else if (dragState.mode === 'trim-start') {
         startFrame = Math.max(0, Math.min(dragState.endFrame - 1, dragState.startFrame + delta));
       } else {
-        endFrame = Math.min(showRef.current.durationFrames, Math.max(dragState.startFrame + 1, dragState.endFrame + delta));
+        endFrame = Math.max(dragState.startFrame + 1, dragState.endFrame + delta);
       }
 
       const next = cloneShow(showRef.current);
@@ -1428,6 +1484,7 @@ export function ShowEditor({
       if (!selected) return;
       selected.clip.startFrame = startFrame;
       selected.clip.endFrame = endFrame;
+      next.durationFrames = Math.max(next.durationFrames, endFrame);
       showRef.current = next;
       onChangeRef.current(next);
     };
@@ -1443,10 +1500,10 @@ export function ShowEditor({
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      if (target?.matches('input, select, textarea')) return;
+      if (target?.matches('input:not([type="file"]), select, textarea, [contenteditable="true"]')) return;
       if (event.code === 'Space') {
         event.preventDefault();
-        setPreviewPlaying((playing) => !playing);
+        togglePreviewPlayback();
       } else if (event.code === 'ArrowLeft') {
         event.preventDefault();
         setPreviewPlaying(false);
@@ -1464,18 +1521,25 @@ export function ShowEditor({
     return () => window.removeEventListener('keydown', handleKeyDown);
   });
 
-  const timelineWidth = Math.max(1100, show.durationFrames * zoom);
+  const timelineTailFrames = show.fps * 30;
+  const visibleTimelineFrames = Math.max(show.durationFrames, playheadFrame) + timelineTailFrames;
+  const timelineWidth = Math.max(1100, visibleTimelineFrames * zoom);
   const rulerSeconds = Array.from(
-    { length: Math.floor(show.durationFrames / show.fps) + 1 },
+    { length: Math.floor(visibleTimelineFrames / show.fps) + 1 },
     (_, second) => second,
   );
   const { waveform: audioBars, loading: audioLoading } = useAudioWaveform(
     show.audio.source === 'file' ? show.audio.path : undefined,
-    show.durationFrames,
+    show.audio.source === 'file' ? (show.audio.durationFrames ?? show.durationFrames) : show.durationFrames,
     show.fps,
     zoom
   );
   const playheadLeft = playheadFrame * zoom;
+  const seekTimelineFrame = (frame: number) => {
+    const nextFrame = Math.max(0, Math.round(frame));
+    setPreviewPlaying(false);
+    setPlayheadFrame(nextFrame);
+  };
   const selectedElementState = selection?.clip.kind === 'element'
     ? getElementStateAtFrame(selection.clip, playheadFrame)
     : null;
@@ -1750,7 +1814,14 @@ export function ShowEditor({
               <button title="Frame précédente" onClick={() => { setPreviewPlaying(false); setPlayheadFrame((frame) => clampShowFrame(show, frame - 1)); }}>
                 <span>−1</span>
               </button>
-              <button className="se-play" title="Lecture locale" onClick={() => setPreviewPlaying((playing) => !playing)}>
+              <button
+                className="se-play"
+                data-testid="preview-play-toggle"
+                title={previewPlaying ? 'Pause locale (Espace)' : 'Lecture locale (Espace)'}
+                aria-label={previewPlaying ? 'Mettre en pause' : 'Lire la timeline'}
+                aria-pressed={previewPlaying}
+                onClick={togglePreviewPlayback}
+              >
                 {previewPlaying ? <Pause size={18} /> : <Play size={18} />}
               </button>
               <button title="Frame suivante" onClick={() => { setPreviewPlaying(false); setPlayheadFrame((frame) => clampShowFrame(show, frame + 1)); }}>
@@ -1821,10 +1892,10 @@ export function ShowEditor({
                     label="Fin"
                     value={selection.clip.endFrame}
                     min={selection.clip.startFrame}
-                    max={show.durationFrames}
+                    max={visibleTimelineFrames}
                     suffix="fr"
                     onChange={(value) => updateSelectedClip((clip) => {
-                      clip.endFrame = Math.min(show.durationFrames, Math.max(clip.startFrame, Math.round(value)));
+                      clip.endFrame = Math.max(clip.startFrame, Math.round(value));
                     })}
                   />
                 </div>
@@ -1850,7 +1921,17 @@ export function ShowEditor({
 
               {selection.clip.kind === 'pattern' && (
                 <div className="se-inspector-section">
-                  <span className="se-section-label">Motif écran</span>
+                  <div className="se-section-row">
+                    <span className="se-section-label">Plan écran</span>
+                    <button
+                      className="se-keyframe-button"
+                      data-testid="split-screen-plan"
+                      disabled={playheadFrame <= selection.clip.startFrame || playheadFrame > selection.clip.endFrame}
+                      onClick={splitSelectedClipAtPlayhead}
+                    >
+                      Couper au curseur
+                    </button>
+                  </div>
                   <label className="se-text-field">
                     <span>Générateur</span>
                     <select
@@ -1879,6 +1960,92 @@ export function ShowEditor({
                       />
                       <code>{selection.clip.color ?? '#ef3340'}</code>
                     </label>
+                  )}
+                  <div className="se-field-grid two" data-testid="screen-plan-controls">
+                    <NumberField
+                      label="Intensité"
+                      value={selection.clip.effectParams?.intensity ?? 1}
+                      min={0}
+                      max={2}
+                      step={0.05}
+                      onChange={(value) => updateSelectedClip((clip) => {
+                        if (clip.kind === 'pattern') clip.effectParams = {
+                          intensity: value,
+                          color: clip.effectParams?.color ?? '#ffffff',
+                          speed: clip.effectParams?.speed ?? 1,
+                          strobe: clip.effectParams?.strobe ?? 0,
+                        };
+                      })}
+                    />
+                    <NumberField
+                      label="Strobe"
+                      value={selection.clip.effectParams?.strobe ?? 0}
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      onChange={(value) => updateSelectedClip((clip) => {
+                        if (clip.kind === 'pattern') clip.effectParams = {
+                          intensity: clip.effectParams?.intensity ?? 1,
+                          color: clip.effectParams?.color ?? '#ffffff',
+                          speed: clip.effectParams?.speed ?? 1,
+                          strobe: value,
+                        };
+                      })}
+                    />
+                  </div>
+                  <label className="se-color-field">
+                    <span>Teinte globale</span>
+                    <input
+                      data-testid="screen-plan-tint"
+                      type="color"
+                      value={selection.clip.effectParams?.color ?? '#ffffff'}
+                      onChange={(event) => updateSelectedClip((clip) => {
+                        if (clip.kind === 'pattern') clip.effectParams = {
+                          intensity: clip.effectParams?.intensity ?? 1,
+                          color: event.target.value,
+                          speed: clip.effectParams?.speed ?? 1,
+                          strobe: clip.effectParams?.strobe ?? 0,
+                        };
+                      })}
+                    />
+                    <code>{selection.clip.effectParams?.color ?? '#ffffff'}</code>
+                  </label>
+                  {selection.clip.lyrics && (
+                    <div data-testid="lyrics-plan-editor" style={{ display: 'grid', gap: '8px' }}>
+                      <span className="se-section-label">Texte du carton</span>
+                      <label className="se-text-field">
+                        <span>Ligne 1</span>
+                        <input
+                          data-testid="lyrics-line-1"
+                          value={selection.clip.lyrics.lines[0]}
+                          onChange={(event) => updateSelectedClip((clip) => {
+                            if (clip.kind === 'pattern' && clip.lyrics) clip.lyrics.lines[0] = event.target.value.toUpperCase();
+                          })}
+                        />
+                      </label>
+                      <label className="se-text-field">
+                        <span>Ligne 2</span>
+                        <input
+                          data-testid="lyrics-line-2"
+                          value={selection.clip.lyrics.lines[1]}
+                          onChange={(event) => updateSelectedClip((clip) => {
+                            if (clip.kind === 'pattern' && clip.lyrics) clip.lyrics.lines[1] = event.target.value.toUpperCase();
+                          })}
+                        />
+                      </label>
+                      <label className="se-color-field">
+                        <span>Couleur du fond / texte</span>
+                        <input
+                          data-testid="lyrics-accent"
+                          type="color"
+                          value={selection.clip.lyrics.accent}
+                          onChange={(event) => updateSelectedClip((clip) => {
+                            if (clip.kind === 'pattern' && clip.lyrics) clip.lyrics.accent = event.target.value;
+                          })}
+                        />
+                        <code>{selection.clip.lyrics.accent}</code>
+                      </label>
+                    </div>
                   )}
                   {selection.clip.pattern === 'custom' && (
                     <label className="se-textarea-field" style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -2095,8 +2262,7 @@ export function ShowEditor({
                 style={{ width: `${timelineWidth}px` }}
                 onPointerDown={(event) => {
                   const bounds = event.currentTarget.getBoundingClientRect();
-                  setPreviewPlaying(false);
-                  setPlayheadFrame(clampShowFrame(show, (event.clientX - bounds.left) / zoom));
+                  seekTimelineFrame((event.clientX - bounds.left) / zoom);
                 }}
               >
                 {rulerSeconds.map((second) => (
@@ -2121,7 +2287,7 @@ export function ShowEditor({
                   <Lock size={13} />
                 </div>
                 <div className="se-track-lane" style={{ width: `${timelineWidth}px` }}>
-                  <div className="se-audio-clip" style={{ width: `${show.durationFrames * zoom}px` }}>
+                  <div className="se-audio-clip" style={{ width: `${(show.audio.source === 'file' ? (show.audio.durationFrames ?? show.durationFrames) : show.durationFrames) * zoom}px` }}>
                     <div className="se-waveform" style={{ opacity: audioLoading ? 0.35 : 0.65, transition: 'opacity 0.2s' }}>
                       {audioBars.map((height, index) => <i key={index} style={{ height: `${height}%` }} />)}
                     </div>
@@ -2159,6 +2325,15 @@ export function ShowEditor({
                   <button title={track.locked ? 'Déverrouiller' : 'Verrouiller'} onClick={() => setTrackProperty(track.id, 'locked', !track.locked)}>
                     {track.locked ? <Lock size={13} /> : <Unlock size={13} />}
                   </button>
+                  <button
+                    className="se-delete-track"
+                    data-testid={`delete-track-${track.id}`}
+                    title={`Supprimer la piste ${track.name}`}
+                    aria-label={`Supprimer la piste ${track.name}`}
+                    onClick={() => removeTrack(track.id)}
+                  >
+                    <Trash2 size={13} />
+                  </button>
                 </div>
                 <div
                   className={`se-track-lane ${track.muted ? 'is-muted' : ''}`}
@@ -2166,8 +2341,7 @@ export function ShowEditor({
                   onPointerDown={(event) => {
                     if ((event.target as HTMLElement).closest('.se-clip')) return;
                     const bounds = event.currentTarget.getBoundingClientRect();
-                    setPreviewPlaying(false);
-                    setPlayheadFrame(clampShowFrame(show, (event.clientX - bounds.left) / zoom));
+                    seekTimelineFrame((event.clientX - bounds.left) / zoom);
                   }}
                 >
                   {track.clips.map((clip) => {
@@ -2181,7 +2355,7 @@ export function ShowEditor({
                         style={{ left: `${left}px`, width: `${width}px`, '--clip-color': track.color } as CSSProperties}
                         onPointerDown={(event) => startDrag(event, clip, track, 'move')}
                       >
-                        <button className="se-trim-handle start" aria-label="Raccourcir le début" onPointerDown={(event) => startDrag(event, clip, track, 'trim-start')} />
+                        <button className="se-trim-handle start" aria-label="Ajuster le début du rush" onPointerDown={(event) => startDrag(event, clip, track, 'trim-start')} />
                         <div className="se-clip-title">
                           <span>{clip.name}</span>
                           <small>{clip.endFrame - clip.startFrame} fr {clip.loop.enabled ? `· ↻ ${clip.loop.lengthFrames}` : ''}</small>
@@ -2190,7 +2364,7 @@ export function ShowEditor({
                           const markerLeft = Math.min(width - 8, Math.max(4, keyframe.frame * zoom));
                           return <i className="se-keyframe-marker" key={`${keyframe.frame}-${index}`} style={{ left: `${markerLeft}px` }} />;
                         })}
-                        <button className="se-trim-handle end" aria-label="Raccourcir la fin" onPointerDown={(event) => startDrag(event, clip, track, 'trim-end')} />
+                        <button className="se-trim-handle end" aria-label="Ajuster la fin du rush" onPointerDown={(event) => startDrag(event, clip, track, 'trim-end')} />
                       </div>
                     );
                   })}

@@ -367,6 +367,10 @@
 }
 
 .se-inspector {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
   border-left: 1px solid var(--se-line);
 }
 
@@ -797,8 +801,12 @@
 }
 
 .se-inspector-scroll {
-  max-height: 500px;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .se-empty-inspector {
@@ -1159,7 +1167,7 @@
 
 .se-track-label {
   display: grid;
-  grid-template-columns: 27px minmax(0, 1fr) 22px 22px;
+  grid-template-columns: 27px minmax(0, 1fr) 22px 22px 22px;
   align-items: center;
   gap: 6px;
   padding: 7px 8px 7px 10px;
@@ -1220,6 +1228,15 @@
 .se-track-label > button:hover {
   background: #242833 !important;
   color: #fff;
+}
+
+.se-track-label > button.se-delete-track {
+  color: #7f4b52;
+}
+
+.se-track-label > button.se-delete-track:hover {
+  background: rgba(239, 51, 64, 0.13) !important;
+  color: #ff6670;
 }
 
 .se-track-lane {
@@ -1388,14 +1405,37 @@
   z-index: 5;
   top: 0;
   bottom: 0;
-  width: 7px;
+  width: 14px;
   padding: 0 !important;
+  border: 0 !important;
   border-radius: 0 !important;
+  background: transparent;
   cursor: ew-resize;
 }
 
+.se-trim-handle::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  width: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, .9);
+  opacity: 0;
+  transition: opacity .12s ease, box-shadow .12s ease;
+}
+
 .se-trim-handle.start { left: 0; }
+.se-trim-handle.start::after { left: 2px; }
 .se-trim-handle.end { right: 0; }
+.se-trim-handle.end::after { right: 2px; }
+
+.se-clip:hover .se-trim-handle::after,
+.se-clip.is-selected .se-trim-handle::after,
+.se-trim-handle:focus-visible::after {
+  opacity: 1;
+  box-shadow: 0 0 7px var(--clip-color);
+}
 
 .se-keyframe-marker {
   position: absolute;
@@ -1503,7 +1543,7 @@
   .se-inspector-scroll {
     display: grid;
     grid-template-columns: repeat(2, minmax(240px, 1fr));
-    max-height: 340px;
+    max-height: none;
     overflow: auto;
   }
 

@@ -416,7 +416,8 @@ function startShowFromBeginning() {
 
 const LEGACY_WALL_EFFECTS = new Set([
   'black', 'guitar_intro', 'intro_ticks', 'blue_star_burst',
-  'quadrant_flashes', 'laser_sweeps', 'reactive_drop',
+  'cosmo_singer_intro', 'quadrant_flashes', 'quadrant_flashes_no_mask',
+  'laser_sweeps', 'reactive_drop',
 ]);
 const LEGACY_LYRE_EFFECTS = new Set([
   'black', 'lyre_intro', 'lyre_kick_pulse', 'lyre_circle_color',
@@ -491,7 +492,10 @@ function evaluateShowDocumentFrame(frame: number, isAudioImpact: boolean) {
     .filter((track) => track.clips.length > 0);
 
   if (legacyWall?.clip.kind === 'pattern') {
-    evaluateWallBlock(legacyWall.clip.pattern, time, isAudioImpact, legacyWall.clip.effectParams);
+    const legacyPattern = legacyWall.clip.pattern === 'reactive_drop_text' || legacyWall.clip.pattern === 'reactive_drop_character'
+      ? 'reactive_drop'
+      : legacyWall.clip.pattern;
+    evaluateWallBlock(legacyPattern, time, isAudioImpact, legacyWall.clip.effectParams);
   }
   if (customScreenTracks.length > 0 || !legacyWall) {
     const screenShow = { ...activeShowDocument, tracks: customScreenTracks };

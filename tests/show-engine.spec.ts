@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import {
@@ -6,6 +7,7 @@ import {
   evaluateScreenPixel,
   getElementStateAtFrame,
   prepareShowFrame,
+  renderShowFrame,
 } from '../src/show/showEngine.ts';
 import { SHOW_TIMELINE, type TimelineBlock } from '../src/timeline/showTimeline.ts';
 import {
@@ -43,16 +45,50 @@ test('the root show document exactly mirrors the current dev timeline', () => {
   expect(show.durationFrames).toBe(1800);
   expect(show.audio).toMatchObject({ source: 'file', path: '/tanzschein.mp3', bpm: 130 });
 
-  const byId = (left: TimelineBlock, right: TimelineBlock) => Number(left.id) - Number(right.id);
+  const byId = (left: TimelineBlock, right: TimelineBlock) => left.id.localeCompare(right.id, undefined, { numeric: true });
   expect(documentBlocks(show).sort(byId)).toEqual([...SHOW_TIMELINE].sort(byId));
 });
 
-test('inclusive boundary ordering remains identical to the dev server', () => {
+test('all visible screen plans are explicit timeline clips', () => {
   const wall = show.tracks.find((track) => track.id === 'dev-wall');
-  const atDropBoundary = wall?.clips.find((clip) => 120 >= clip.startFrame && 120 <= clip.endFrame);
-  const atVerseBoundary = wall?.clips.find((clip) => 1040 >= clip.startFrame && 1040 <= clip.endFrame);
-  expect(atDropBoundary?.id).toBe('16');
-  expect(atVerseBoundary?.id).toBe('19');
+  expect(wall?.clips.map((clip) => [clip.startFrame, clip.endFrame, clip.kind === 'pattern' ? clip.pattern : clip.kind])).toEqual([
+    [0, 367, 'cosmo_singer_intro'],
+    [368, 433, 'reactive_drop_text'],
+    [434, 663, 'reactive_drop_character'],
+    [664, 729, 'reactive_drop_text'],
+    [730, 933, 'reactive_drop_character'],
+    [934, 999, 'quadrant_flashes_no_mask'],
+    [1000, 1093, 'quadrant_flashes_no_mask'],
+    [1094, 1181, 'quadrant_flashes_no_mask'],
+    [1182, 1237, 'quadrant_flashes_no_mask'],
+    [1238, 1325, 'quadrant_flashes_no_mask'],
+    [1326, 1389, 'quadrant_flashes_no_mask'],
+    [1390, 1481, 'quadrant_flashes_no_mask'],
+    [1482, 1563, 'quadrant_flashes_no_mask'],
+    [1564, 1800, 'laser_sweeps'],
+  ]);
+});
+
+test('timeline plan extraction does not change a single video pixel', () => {
+  const hash = createHash('sha256');
+  for (let frame = 0; frame <= show.durationFrames; frame += 1) {
+    hash.update(renderShowFrame(show, frame, 64, 64, false).pixels);
+  }
+  expect(hash.digest('hex')).toBe('61aada146af8a842e4c95579fecfa47760efdfbcfc7563df4f56bd1dce020920');
+});
+
+test('the HEY generator remains visible when selected on a character shot', () => {
+  const editedShow = structuredClone(show);
+  const wall = editedShow.tracks.find((track) => track.id === 'dev-wall');
+  const clip = wall?.clips.find((candidate) => candidate.id === '19-character-1');
+  expect(clip?.kind).toBe('pattern');
+  if (!clip || clip.kind !== 'pattern') return;
+
+  const original = renderShowFrame(show, 500, 64, 64, false).pixels;
+  clip.pattern = 'reactive_drop_text';
+  const withHey = renderShowFrame(editedShow, 500, 64, 64, false).pixels;
+
+  expect(withHey).not.toEqual(original);
 });
 
 test('free screen keyframes interpolate without a preset', () => {
