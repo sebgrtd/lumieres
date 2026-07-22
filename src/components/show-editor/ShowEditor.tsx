@@ -718,6 +718,10 @@ export function ShowEditor({
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [audioDragState, setAudioDragState] = useState<AudioDragState | null>(null);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [aiPatternPrompt, setAiPatternPrompt] = useState('');
+  const [aiPatternLoading, setAiPatternLoading] = useState(false);
+  const [aiPatternError, setAiPatternError] = useState<string | null>(null);
+  const [aiPatternExplanation, setAiPatternExplanation] = useState<string | null>(null);
   const [newProjectDraft, setNewProjectDraft] = useState<NewProjectDraft>({
     name: 'Mon animation écran',
     fps: 40,
@@ -1725,6 +1729,36 @@ export function ShowEditor({
     event.stopPropagation();
     setAudioDragState({ clipId: clip.id, mode, pointerX: event.clientX, startFrame: clip.startFrame, endFrame: clip.endFrame, sourceOffsetFrames: clip.sourceOffsetFrames, sourceTrackId: clip.trackId ?? clip.id });
   };
+
+  const generatePatternWithAi = async () => {
+    if (!selectedClipId || aiPatternPrompt.trim().length < 3 || aiPatternLoading) return;
+    const targetClipId = selectedClipId;
+    setAiPatternLoading(true);
+    setAiPatternError(null);
+    setAiPatternExplanation(null);
+    try {
+      const response = await fetch('/api/ai/pattern', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: aiPatternPrompt.trim() }),
+      });
+      const result = await response.json() as { success?: boolean; name?: string; explanation?: string; code?: string; error?: string };
+      if (!response.ok || !result.success || !result.code) throw new Error(result.error || 'Génération impossible.');
+      applyMutation((next) => {
+        const target = findSelection(next, targetClipId);
+        if (!target || target.clip.kind !== 'pattern') return;
+        target.clip.pattern = 'custom';
+        target.clip.code = result.code;
+        if (result.name) target.clip.name = result.name;
+      });
+      setAiPatternExplanation(result.explanation || 'Motif généré et appliqué.');
+      onLog(`Motif IA généré : ${result.name || 'motif personnalisé'}.`);
+    } catch (error) {
+      setAiPatternError((error as Error).message);
+    } finally {
+      setAiPatternLoading(false);
+    }
+  };
   const selectedElementState = selection?.clip.kind === 'element'
     ? getElementStateAtFrame(selection.clip, playheadFrame)
     : null;
@@ -2233,30 +2267,42 @@ export function ShowEditor({
                     </div>
                   )}
                   {selection.clip.pattern === 'custom' && (
-                    <label className="se-textarea-field" style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      <span>Code JS (évalué par pixel)</span>
-                      <textarea
-                        data-testid="custom-pattern-code"
-                        value={(selection.clip as PatternClip).code ?? ''}
-                        onChange={(event) => updateSelectedClip((clip) => {
-                          if (clip.kind === 'pattern') clip.code = event.target.value;
-                        })}
-                        placeholder="// Écrivez votre motif ici..."
-                        rows={10}
-                        style={{
-                          fontFamily: 'Consolas, Monaco, monospace',
-                          fontSize: '11px',
-                          backgroundColor: '#1a1a1a',
-                          color: '#e0e0e0',
-                          border: '1px solid #333',
-                          borderRadius: '4px',
-                          padding: '8px',
-                          width: '100%',
-                          resize: 'vertical',
-                          lineHeight: '1.4',
-                        }}
-                      />
-                    </label>
+                    <>
+                      <div className="se-ai-pattern">
+                        <div className="se-ai-pattern-heading"><Sparkles size={14} /><strong>Générer avec l’IA</strong></div>
+                        <textarea
+                          data-testid="ai-pattern-prompt"
+                          value={aiPatternPrompt}
+                          onChange={(event) => setAiPatternPrompt(event.target.value)}
+                          placeholder="Ex. Des vagues bleues partent du centre et pulsent rapidement…"
+                          rows={3}
+                          maxLength={1000}
+                        />
+                        <div className="se-ai-suggestions">
+                          {['Vagues néon', 'Tunnel hypnotique', 'Étoiles scintillantes'].map((suggestion) => (
+                            <button key={suggestion} onClick={() => setAiPatternPrompt(suggestion)}>{suggestion}</button>
+                          ))}
+                        </div>
+                        <button className="se-ai-generate" data-testid="generate-ai-pattern" disabled={aiPatternLoading || aiPatternPrompt.trim().length < 3} onClick={() => void generatePatternWithAi()}>
+                          <Sparkles size={13} /> {aiPatternLoading ? 'Génération…' : 'Générer et appliquer'}
+                        </button>
+                        {aiPatternError && <p className="se-ai-message is-error" role="alert">{aiPatternError}</p>}
+                        {aiPatternExplanation && <p className="se-ai-message is-success">{aiPatternExplanation}</p>}
+                      </div>
+                      <label className="se-textarea-field" style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <span>Code JS (évalué par pixel)</span>
+                        <textarea
+                          data-testid="custom-pattern-code"
+                          value={(selection.clip as PatternClip).code ?? ''}
+                          onChange={(event) => updateSelectedClip((clip) => {
+                            if (clip.kind === 'pattern') clip.code = event.target.value;
+                          })}
+                          placeholder="// Écrivez votre motif ici..."
+                          rows={10}
+                          style={{ fontFamily: 'Consolas, Monaco, monospace', fontSize: '11px', backgroundColor: '#1a1a1a', color: '#e0e0e0', border: '1px solid #333', borderRadius: '4px', padding: '8px', width: '100%', resize: 'vertical', lineHeight: '1.4' }}
+                        />
+                      </label>
+                    </>
                   )}
                   {selection.clip.pattern !== 'custom' && (
                     <>

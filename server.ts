@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -6,6 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { exec } from 'child_process';
+import vm from 'node:vm';
 import { ArtNetSender } from './src/router/artnet.ts';
 import { EHubReceiver, type EntityState } from './src/router/ehub.ts';
 import {
@@ -33,6 +35,165 @@ const __dirname = path.dirname(__filename);
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
+
+const AI_PROVIDER = (process.env.AI_PROVIDER || 'groq').toLowerCase();
+const AI_MODEL = process.env.AI_MODEL || (AI_PROVIDER === 'ollama' ? 'qwen2.5-coder:3b' : 'openai/gpt-oss-20b');
+const OLLAMA_URL = (process.env.OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
+
+const PATTERN_SYSTEM_PROMPT = `Tu génères de petits shaders JavaScript pour une matrice LED 128x128.
+Variables disponibles: x, y (0..127), t (secondes), d (distance au centre), a (angle en radians), f (frame).
+Attention: le rendu final inverse verticalement la matrice; dans le shader, y positif apparaît vers le haut de l'écran. Une chute doit donc faire diminuer la coordonnée y au fil du temps.
+Le code doit uniquement affecter r, g et b (0..255), sans jamais les déclarer avec let, const ou var. Math est disponible.
+Interdits: fonctions, boucles, objets externes, DOM, réseau, imports, eval, Math.random, temporisateurs et code asynchrone.
+Le code est exécuté pour chaque pixel: reste court et performant. Tu peux déclarer des constantes avec const ou let.
+Respecte littéralement le sujet demandé. Si le prompt nomme un objet concret (banane, cœur, étoile, visage, etc.), dessine une silhouette reconnaissable de cet objet sur un fond noir; ne le remplace jamais par un gradient abstrait.
+Pour animer une rotation, transforme d'abord les coordonnées centrées: px=x-64, py=y-64, puis rx=px*Math.cos(t)+py*Math.sin(t), ry=-px*Math.sin(t)+py*Math.cos(t). Construis ensuite la forme avec des ellipses, distances, Math.abs et des masques booléens.
+Exemple de principe pour une banane: une grande ellipse jaune moins une ellipse intérieure décalée forme un croissant; ajoute deux petites extrémités brunes. Seuls les pixels du masque sont colorés, tous les autres ont r=0, g=0, b=0.
+Avant de répondre, vérifie mentalement que le code dessine bien le sujet demandé à t=0 et que l'animation modifie la forme ou sa position, pas seulement les couleurs.
+Retourne un nom court, une explication en français et le code brut sans balises Markdown.`;
+
+function validateGeneratedPattern(code: string, prompt = ''): string {
+  const trimmed = code.trim()
+    .replace(/\b(?:let|const|var)\s+(r|g|b)\s*=/g, '$1 =');
+  if (!trimmed || trimmed.length > 4000) throw new Error('Le code généré est vide ou trop long.');
+  const forbidden = /\b(window|document|globalThis|this|fetch|XMLHttpRequest|WebSocket|eval|Function|import|require|process|constructor|prototype|__proto__|while|for|do|class|setTimeout|setInterval)\b|Math\.random|=>/;
+  if (forbidden.test(trimmed)) throw new Error('Le code généré contient une instruction interdite.');
+  if (!/\br\s*=/.test(trimmed) || !/\bg\s*=/.test(trimmed) || !/\bb\s*=/.test(trimmed)) {
+    throw new Error('Le code doit définir r, g et b.');
+  }
+  const asksForConcreteShape = /\b(banan|triangle|cœur|coeur|étoile|etoile|visage|chat|chien|soleil|lune|fleur|arbre|feuille|logo|lettre|texte|cercle|carré|carre|personnage)/i.test(prompt);
+  if (asksForConcreteShape && (!/\bx\b/.test(trimmed) || !/\by\b/.test(trimmed) || !/(?:<|>|Math\.abs|if\s*\()/.test(trimmed))) {
+    throw new Error("Le code ne dessine pas réellement la forme demandée.");
+  }
+  const wrapped = `'use strict'; let r=0,g=0,b=0; ${trimmed}; [r,g,b];`;
+  const result = vm.runInNewContext(wrapped, { x: 64, y: 64, t: 1, d: 0, a: 0, f: 40, Math }, { timeout: 50 });
+  if (!Array.isArray(result) || result.some((value) => typeof value !== 'number' || !Number.isFinite(value))) {
+    throw new Error('Le code ne produit pas trois composantes numériques valides.');
+  }
+  return trimmed;
+}
+
+function parseAiPattern(content: string, prompt = ''): { name: string; explanation: string; code: string } {
+  const cleaned = content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+  const parsed = JSON.parse(cleaned) as Record<string, unknown>;
+  if (typeof parsed.name !== 'string' || typeof parsed.explanation !== 'string' || typeof parsed.code !== 'string') {
+    throw new Error("La réponse de l'IA n'a pas le format attendu.");
+  }
+  return { name: parsed.name.slice(0, 80), explanation: parsed.explanation.slice(0, 300), code: validateGeneratedPattern(parsed.code, prompt) };
+}
+
+function getGuaranteedPattern(prompt: string): { name: string; explanation: string; code: string } | null {
+  if (/\bbananes?\b/i.test(prompt)) {
+    const code = `const speed=0.8;
+const angle=t*speed;
+const px=x-64;
+const py=y-64;
+const rx=px*Math.cos(angle)+py*Math.sin(angle);
+const ry=-px*Math.sin(angle)+py*Math.cos(angle);
+const outer=(rx*rx)/(38*38)+(ry*ry)/(22*22)<1;
+const hollow=(rx*rx)/(34*34)+((ry-10)*(ry-10))/(18*18)<1;
+const body=outer&&!hollow;
+const leftTip=(rx+34)*(rx+34)+(ry-7)*(ry-7)<18;
+const rightTip=(rx-34)*(rx-34)+(ry-7)*(ry-7)<18;
+const tip=(leftTip||rightTip)&&outer;
+r=tip?105:(body?255:0);
+g=tip?58:(body?214:0);
+b=tip?18:(body?28:0);`;
+    return {
+      name: 'Banane tournante',
+      explanation: 'Une silhouette jaune en croissant tourne autour de son centre, avec deux extrémités brunes.',
+      code: validateGeneratedPattern(code, prompt),
+    };
+  }
+  if (/\barbres?\b/i.test(prompt) && /\b(feuille|feuilles|tombe|tombent|chute)\b/i.test(prompt)) {
+    const code = `const px=x-64;
+const py=y-64;
+const sway=Math.sin(t*1.4)*2;
+const trunk=Math.abs(px-sway*(-py+4)/46)<7&&py<4&&py>-42;
+const branch1=Math.abs(py-2-0.55*px)<4&&px>-25&&px<2;
+const branch2=Math.abs(py-4+0.5*px)<4&&px>0&&px<25;
+const crown1=(px+18)*(px+18)+(py-22)*(py-22)<360;
+const crown2=px*px+(py-30)*(py-30)<480;
+const crown3=(px-19)*(px-19)+(py-21)*(py-21)<350;
+const crown=crown1||crown2||crown3;
+const y1=30-((t*13)%100),x1=-23+Math.sin(t*2.1)*8;
+const y2=34-((t*11+22)%105),x2=-8+Math.sin(t*1.7+1)*11;
+const y3=28-((t*15+48)%110),x3=9+Math.sin(t*2.4+2)*9;
+const y4=32-((t*9+70)%105),x4=25+Math.sin(t*1.5+3)*10;
+const y5=26-((t*12+86)%115),x5=-31+Math.sin(t*2+4)*7;
+const leaf1=(px-x1)*(px-x1)+(py-y1)*(py-y1)<7;
+const leaf2=(px-x2)*(px-x2)+(py-y2)*(py-y2)<8;
+const leaf3=(px-x3)*(px-x3)+(py-y3)*(py-y3)<7;
+const leaf4=(px-x4)*(px-x4)+(py-y4)*(py-y4)<8;
+const leaf5=(px-x5)*(px-x5)+(py-y5)*(py-y5)<7;
+const falling=leaf1||leaf2||leaf3||leaf4||leaf5;
+r=falling?238:(crown?42:(trunk||branch1||branch2?116:0));
+g=falling?151:(crown?142:(trunk||branch1||branch2?66:0));
+b=falling?38:(crown?55:(trunk||branch1||branch2?28:0));`;
+    return {
+      name: 'Arbre aux feuilles tombantes',
+      explanation: 'Un arbre complet avec tronc, branches et couronne; cinq feuilles suivent des trajectoires continues vers le sol.',
+      code: validateGeneratedPattern(code, prompt),
+    };
+  }
+  return null;
+}
+
+async function requestGroqPattern(apiKey: string, messages: Array<{ role: string; content: string }>): Promise<{ name: string; explanation: string; code: string }> {
+  let lastError = 'La génération du motif a échoué.';
+  const supportsStrictJson = AI_MODEL === 'openai/gpt-oss-20b' || AI_MODEL === 'openai/gpt-oss-120b';
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const strict = supportsStrictJson && attempt === 0;
+    const rawCode = supportsStrictJson ? attempt === 2 : attempt >= 1;
+    try {
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST', headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+        model: AI_MODEL,
+        temperature: attempt === 0 ? 0.25 : 0.1,
+        max_completion_tokens: 1000,
+        messages: rawCode ? [
+          { role: 'system', content: `${PATTERN_SYSTEM_PROMPT}\nRéponds uniquement avec le code JavaScript brut, sans JSON, explication ni Markdown.` },
+          messages[1],
+        ] : (attempt === 0 ? messages : [...messages, { role: 'system', content: 'Nouvelle tentative : renvoie un objet JSON minimal et valide, sans Markdown.' }]),
+        response_format: rawCode ? undefined : (strict ? {
+          type: 'json_schema',
+          json_schema: {
+            name: 'led_pattern', strict: true,
+            schema: {
+              type: 'object', additionalProperties: false,
+              properties: { name: { type: 'string' }, explanation: { type: 'string' }, code: { type: 'string' } },
+              required: ['name', 'explanation', 'code'],
+            },
+          },
+        } : { type: 'json_object' }),
+        }), signal: AbortSignal.timeout(45_000),
+      });
+      const payload = await response.json() as any;
+      if (!response.ok) {
+        const message = payload?.error?.message || `Groq a répondu ${response.status}.`;
+        if (response.status === 429) throw Object.assign(new Error(message), { rateLimited: true });
+        throw new Error(message);
+      }
+      const content = payload?.choices?.[0]?.message?.content;
+      if (typeof content !== 'string') throw new Error("Groq n'a retourné aucun code.");
+      if (rawCode) {
+        const code = content.trim().replace(/^```(?:javascript|js)?\s*/i, '').replace(/\s*```$/, '');
+        return { name: 'Motif IA', explanation: 'Motif généré à partir de ta description.', code: validateGeneratedPattern(code, messages[1]?.content ?? '') };
+      }
+      return parseAiPattern(content, messages[1]?.content ?? '');
+    } catch (error) {
+      lastError = (error as Error).message;
+      console.warn(`[AI pattern] Tentative Groq ${attempt + 1}/3 échouée: ${lastError}`);
+      if ((error as Error & { rateLimited?: boolean }).rateLimited) {
+        throw new Error('Quota gratuit Groq temporairement atteint. Attends quelques secondes puis réessaie.');
+      }
+    }
+  }
+  throw new Error(lastError.includes('Failed to')
+    ? "L'IA n'a pas réussi à produire un motif valide après trois tentatives. Réessaie dans un instant."
+    : lastError);
+}
 
 const LED_WALL_WIDTH = 128;
 const LED_WALL_HEIGHT = 128;
@@ -2234,6 +2395,68 @@ app.post('/api/show-document', (req, res) => {
     res.json({ success: true, show: activeShowDocument });
   } catch (error) {
     res.status(400).json({ success: false, error: (error as Error).message });
+  }
+});
+
+app.get('/api/ai/pattern/status', (_req, res) => {
+  res.json({
+    provider: AI_PROVIDER,
+    model: AI_MODEL,
+    configured: AI_PROVIDER === 'ollama' || Boolean(process.env.GROQ_API_KEY),
+  });
+});
+
+app.post('/api/ai/pattern', async (req, res) => {
+  try {
+    const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
+    if (prompt.length < 3 || prompt.length > 1000) {
+      res.status(400).json({ success: false, error: 'Décris le motif en 3 à 1000 caractères.' });
+      return;
+    }
+
+    const guaranteedPattern = getGuaranteedPattern(prompt);
+    if (guaranteedPattern) {
+      res.json({ success: true, provider: 'local-shape-library', model: 'verified-geometry', ...guaranteedPattern });
+      return;
+    }
+
+    const messages = [
+      { role: 'system', content: `${PATTERN_SYSTEM_PROMPT}\nRéponds exclusivement en JSON: {"name":"...","explanation":"...","code":"..."}.` },
+      { role: 'user', content: prompt },
+    ];
+    let response: Response;
+    if (AI_PROVIDER === 'ollama') {
+      response = await fetch(`${OLLAMA_URL}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: AI_MODEL, stream: false, format: 'json', messages }),
+        signal: AbortSignal.timeout(90_000),
+      });
+    } else {
+      const apiKey = process.env.GROQ_API_KEY;
+      if (!apiKey) throw new Error('GROQ_API_KEY manquante dans le fichier .env.');
+      const pattern = await requestGroqPattern(apiKey, messages);
+      res.json({ success: true, provider: AI_PROVIDER, model: AI_MODEL, ...pattern });
+      return;
+    }
+
+    const payload = await response.json() as any;
+    if (!response.ok) {
+      const providerMessage = payload?.error?.message || `Le fournisseur IA a répondu ${response.status}.`;
+      throw new Error(providerMessage.includes('Failed to generate JSON')
+        ? "L'IA n'a pas réussi à formater le motif après plusieurs tentatives. Réessaie dans un instant."
+        : providerMessage);
+    }
+    const content = payload?.message?.content;
+    if (typeof content !== 'string') throw new Error("L'IA n'a retourné aucun code.");
+    const pattern = parseAiPattern(content, prompt);
+    res.json({ success: true, provider: AI_PROVIDER, model: AI_MODEL, ...pattern });
+  } catch (error) {
+    console.error('[AI pattern]', error);
+    const message = error instanceof Error && error.name === 'TimeoutError'
+      ? "Le fournisseur IA n'a pas répondu à temps."
+      : (error as Error).message;
+    res.status(502).json({ success: false, error: message });
   }
 });
 

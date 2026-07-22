@@ -902,6 +902,64 @@
   font: 500 .61rem/1 'JetBrains Mono', monospace;
 }
 
+.se-ai-pattern {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid rgba(40, 194, 255, .28);
+  border-radius: 5px;
+  background: linear-gradient(145deg, rgba(40, 194, 255, .07), rgba(124, 92, 255, .045));
+}
+
+.se-ai-pattern-heading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #8bdcff;
+  font-size: .68rem;
+}
+
+.se-ai-pattern textarea {
+  width: 100%;
+  min-height: 66px;
+  padding: 8px;
+  resize: vertical;
+  color: #dce5ed;
+  font-size: .68rem;
+  line-height: 1.4;
+  background: #11151b;
+  border: 1px solid #303844;
+  border-radius: 4px;
+}
+
+.se-ai-suggestions { display: flex; flex-wrap: wrap; gap: 5px; }
+
+.se-ai-suggestions button {
+  padding: 4px 6px !important;
+  color: #788a9b;
+  font-size: .52rem;
+  background: rgba(255, 255, 255, .025) !important;
+  border: 1px solid #2b333e !important;
+}
+
+.se-ai-generate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 31px;
+  color: #9ee3ff !important;
+  font-size: .62rem;
+  font-weight: 700;
+  background: rgba(40, 194, 255, .11) !important;
+  border-color: rgba(40, 194, 255, .45) !important;
+}
+
+.se-ai-message { margin: 0; font-size: .61rem; line-height: 1.45; }
+.se-ai-message.is-error { color: #ff7b84; }
+.se-ai-message.is-success { color: #80d4a4; }
+
 .se-toggle-row {
   display: flex;
   align-items: center;
