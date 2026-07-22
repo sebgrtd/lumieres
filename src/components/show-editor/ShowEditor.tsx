@@ -62,6 +62,7 @@ import {
   type ProjectorState,
   type ShowClip,
   type ShowDocument,
+  type ShowAudioClip,
   type ShowTrack,
   type TrackKind,
   type TrackTarget,
@@ -88,10 +89,21 @@ interface Selection {
 
 interface DragState {
   clipId: string;
+  sourceTrackId: string;
   mode: 'move' | 'trim-start' | 'trim-end';
   pointerX: number;
   startFrame: number;
   endFrame: number;
+}
+
+interface AudioDragState {
+  clipId: string;
+  mode: 'move' | 'trim-start' | 'trim-end';
+  pointerX: number;
+  startFrame: number;
+  endFrame: number;
+  sourceOffsetFrames: number;
+  sourceTrackId: string;
 }
 
 interface NewProjectDraft {
@@ -309,6 +321,33 @@ function useAudioWaveform(audioPath: string | undefined, durationFrames: number,
   }, [audioPath, durationFrames, fps, zoom]);
 
   return { waveform, loading };
+}
+
+function AudioTimelineClip({ clip, fps, zoom, onPointerDown, onDelete }: {
+  clip: ShowAudioClip;
+  fps: number;
+  zoom: number;
+  onPointerDown: (event: ReactPointerEvent, mode: AudioDragState['mode']) => void;
+  onDelete: () => void;
+}) {
+  const duration = Math.max(1, clip.endFrame - clip.startFrame);
+  const { waveform, loading } = useAudioWaveform(clip.path, duration, fps, zoom);
+  return (
+    <div
+      className="se-audio-clip is-editable"
+      data-testid={`audio-clip-${clip.id}`}
+      style={{ left: `${clip.startFrame * zoom}px`, width: `${Math.max(24, duration * zoom)}px` }}
+      onPointerDown={(event) => onPointerDown(event, 'move')}
+    >
+      <button className="se-trim-handle start" aria-label="Raccourcir le début de la musique" onPointerDown={(event) => onPointerDown(event, 'trim-start')} />
+      <div className="se-waveform" style={{ opacity: loading ? 0.35 : 0.65 }}>
+        {waveform.map((height, index) => <i key={index} style={{ height: `${height}%` }} />)}
+      </div>
+      <span>{clip.label} · {formatTimecode(duration, fps)}</span>
+      <button className="se-audio-delete" aria-label={`Supprimer ${clip.label}`} onPointerDown={(event) => event.stopPropagation()} onClick={onDelete}><X size={11} /></button>
+      <button className="se-trim-handle end" aria-label="Raccourcir la fin de la musique" onPointerDown={(event) => onPointerDown(event, 'trim-end')} />
+    </div>
+  );
 }
 
 const LEGACY_PATTERN_CODES: Record<string, string> = {
@@ -677,6 +716,7 @@ export function ShowEditor({
   };
 
   const [dragState, setDragState] = useState<DragState | null>(null);
+  const [audioDragState, setAudioDragState] = useState<AudioDragState | null>(null);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [newProjectDraft, setNewProjectDraft] = useState<NewProjectDraft>({
     name: 'Mon animation écran',
@@ -685,6 +725,7 @@ export function ShowEditor({
   });
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const audioInputRef = useRef<HTMLInputElement | null>(null);
   const showRef = useRef(show);
   const onChangeRef = useRef(onChange);
 
@@ -742,7 +783,8 @@ export function ShowEditor({
     const furthestClipFrame = next.tracks.reduce((furthest, track) => (
       track.clips.reduce((trackFurthest, clip) => Math.max(trackFurthest, clip.endFrame), furthest)
     ), 0);
-    next.durationFrames = Math.max(next.durationFrames, furthestClipFrame);
+    const furthestAudioFrame = (next.audioClips ?? []).reduce((furthest, clip) => Math.max(furthest, clip.endFrame), 0);
+    next.durationFrames = Math.max(next.durationFrames, furthestClipFrame, furthestAudioFrame);
     if (next.audio.source === 'file' && next.audio.durationFrames === undefined && next.durationFrames > previousDuration) {
       next.audio.durationFrames = previousDuration;
     }
@@ -1455,6 +1497,7 @@ export function ShowEditor({
     setSelectedClipId(clip.id);
     setDragState({
       clipId: clip.id,
+      sourceTrackId: track.id,
       mode,
       pointerX: event.clientX,
       startFrame: clip.startFrame,
@@ -1488,7 +1531,24 @@ export function ShowEditor({
       showRef.current = next;
       onChangeRef.current(next);
     };
-    const stop = () => setDragState(null);
+    const stop = (event: PointerEvent) => {
+      const lane = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-drop-track-id]');
+      const targetTrackId = lane?.dataset.dropTrackId;
+      if (targetTrackId && targetTrackId !== dragState.sourceTrackId) {
+        const next = cloneShow(showRef.current);
+        const source = next.tracks.find((track) => track.id === dragState.sourceTrackId);
+        const target = next.tracks.find((track) => track.id === targetTrackId);
+        const clipIndex = source?.clips.findIndex((clip) => clip.id === dragState.clipId) ?? -1;
+        if (source && target && source.kind === target.kind && !target.locked && clipIndex >= 0) {
+          const [clip] = source.clips.splice(clipIndex, 1);
+          target.clips.push(clip);
+          target.clips.sort((left, right) => left.startFrame - right.startFrame);
+          showRef.current = next;
+          onChangeRef.current(next);
+        }
+      }
+      setDragState(null);
+    };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', stop, { once: true });
     return () => {
@@ -1496,6 +1556,50 @@ export function ShowEditor({
       window.removeEventListener('pointerup', stop);
     };
   }, [dragState, zoom]);
+
+  useEffect(() => {
+    if (!audioDragState) return;
+    const move = (event: PointerEvent) => {
+      const delta = Math.round((event.clientX - audioDragState.pointerX) / zoom);
+      let startFrame = audioDragState.startFrame;
+      let endFrame = audioDragState.endFrame;
+      let sourceOffsetFrames = audioDragState.sourceOffsetFrames;
+      if (audioDragState.mode === 'move') {
+        const duration = endFrame - startFrame;
+        startFrame = Math.max(0, startFrame + delta);
+        endFrame = startFrame + duration;
+      } else if (audioDragState.mode === 'trim-start') {
+        startFrame = Math.max(0, Math.min(endFrame - 1, startFrame + delta));
+        sourceOffsetFrames = Math.max(0, sourceOffsetFrames + (startFrame - audioDragState.startFrame));
+      } else {
+        endFrame = Math.max(startFrame + 1, endFrame + delta);
+      }
+      const next = cloneShow(showRef.current);
+      next.audioClips = editableAudioClips().map((clip) => clip.id === audioDragState.clipId
+        ? { ...clip, startFrame, endFrame, sourceOffsetFrames }
+        : clip);
+      next.durationFrames = Math.max(next.durationFrames, endFrame);
+      showRef.current = next;
+      onChangeRef.current(next);
+    };
+    const stop = (event: PointerEvent) => {
+      const lane = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-audio-track-id]');
+      const targetTrackId = lane?.dataset.audioTrackId;
+      if (targetTrackId && targetTrackId !== audioDragState.sourceTrackId) {
+        const next = cloneShow(showRef.current);
+        next.audioClips = editableAudioClips().map((clip) => clip.id === audioDragState.clipId ? { ...clip, trackId: targetTrackId } : clip);
+        showRef.current = next;
+        onChangeRef.current(next);
+      }
+      setAudioDragState(null);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', stop, { once: true });
+    return () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', stop);
+    };
+  }, [audioDragState, zoom]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1528,17 +1632,98 @@ export function ShowEditor({
     { length: Math.floor(visibleTimelineFrames / show.fps) + 1 },
     (_, second) => second,
   );
-  const { waveform: audioBars, loading: audioLoading } = useAudioWaveform(
-    show.audio.source === 'file' ? show.audio.path : undefined,
-    show.audio.source === 'file' ? (show.audio.durationFrames ?? show.durationFrames) : show.durationFrames,
-    show.fps,
-    zoom
-  );
+  const timelineAudioClips = show.audioClips ?? (show.audio.source === 'none' ? [] : [{
+    id: 'audio-master',
+    trackId: 'audio-master',
+    label: show.audio.label,
+    path: show.audio.source === 'file' ? show.audio.path : '',
+    startFrame: 0,
+    endFrame: show.audio.source === 'file' ? (show.audio.durationFrames ?? show.durationFrames) : show.durationFrames,
+    sourceOffsetFrames: 0,
+    bpm: show.audio.bpm,
+  } satisfies ShowAudioClip]);
+  const audioTrackMap = new Map<string, ShowAudioClip[]>();
+  timelineAudioClips.forEach((clip) => {
+    const trackId = clip.trackId ?? clip.id;
+    audioTrackMap.set(trackId, [...(audioTrackMap.get(trackId) ?? []), clip]);
+  });
+  const audioTracks = Array.from(audioTrackMap.entries());
   const playheadLeft = playheadFrame * zoom;
   const seekTimelineFrame = (frame: number) => {
     const nextFrame = Math.max(0, Math.round(frame));
     setPreviewPlaying(false);
     setPlayheadFrame(nextFrame);
+  };
+
+  const addGeneratorPlan = () => {
+    const { startFrame, endFrame } = clipWindow(6);
+    const clip: PatternClip = {
+      id: createId('plan'),
+      name: 'Nouveau plan générateur',
+      kind: 'pattern',
+      pattern: 'solid',
+      color: '#ef3340',
+      startFrame,
+      endFrame,
+      timeMode: 'clip',
+      loop: { enabled: false, lengthFrames: Math.max(1, endFrame - startFrame) },
+    };
+    applyMutation((next) => {
+      const track = ensureTrack(next, {
+        name: 'Plans écran', kind: 'screen', target: 'wall', color: '#ef3340', alwaysCreate: true,
+      });
+      track.clips.push(clip);
+    });
+    setSelectedClipId(clip.id);
+    onLog('Plan générateur ajouté. Choisis sa séquence dans le panneau Propriétés.');
+  };
+
+  const editableAudioClips = (): ShowAudioClip[] => {
+    if (showRef.current.audioClips) return showRef.current.audioClips;
+    const audio = showRef.current.audio;
+    if (audio.source === 'none') return [];
+    return [{
+      id: 'audio-master',
+      trackId: 'audio-master',
+      label: audio.label,
+      path: audio.source === 'file' ? audio.path : '',
+      startFrame: 0,
+      endFrame: audio.source === 'file' ? (audio.durationFrames ?? showRef.current.durationFrames) : showRef.current.durationFrames,
+      sourceOffsetFrames: 0,
+      bpm: audio.bpm,
+    }];
+  };
+
+  const handleAudioImport = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.addEventListener('load', () => {
+      const path = String(reader.result ?? '');
+      const probe = new Audio(path);
+      probe.addEventListener('loadedmetadata', () => {
+      const durationFrames = Math.max(1, Math.round((Number.isFinite(probe.duration) ? probe.duration : 30) * showRef.current.fps));
+      const clip: ShowAudioClip = {
+        id: createId('audio'), label: file.name, path,
+        startFrame: playheadFrame, endFrame: playheadFrame + durationFrames,
+        sourceOffsetFrames: 0, bpm: 120,
+      };
+      clip.trackId = clip.id;
+      applyMutation((next) => {
+        next.audioClips = [...editableAudioClips(), clip];
+        if (next.audio.source === 'none') next.audio = { label: file.name, source: 'file', preset: null, path, bpm: 120, durationFrames };
+      });
+      onLog(`Musique ajoutée à la frame ${playheadFrame}. Elle peut être déplacée et raccourcie.`);
+      }, { once: true });
+    }, { once: true });
+    reader.readAsDataURL(file);
+    event.target.value = '';
+  };
+
+  const startAudioDrag = (event: ReactPointerEvent, clip: ShowAudioClip, mode: AudioDragState['mode']) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setAudioDragState({ clipId: clip.id, mode, pointerX: event.clientX, startFrame: clip.startFrame, endFrame: clip.endFrame, sourceOffsetFrames: clip.sourceOffsetFrames, sourceTrackId: clip.trackId ?? clip.id });
   };
   const selectedElementState = selection?.clip.kind === 'element'
     ? getElementStateAtFrame(selection.clip, playheadFrame)
@@ -2236,10 +2421,13 @@ export function ShowEditor({
         <div className="se-timeline-toolbar">
           <div>
             <strong>Timeline</strong>
-            <span>{show.tracks.length + (show.audio.source === 'none' ? 0 : 1)} pistes · snap à 1 frame</span>
+            <span>{show.tracks.length + timelineAudioClips.length} pistes · snap à 1 frame</span>
           </div>
-          <div className="se-zoom-control">
-            <ZoomIn size={14} />
+          <div className="se-timeline-actions">
+            <button className="se-button ghost" data-testid="add-plan" onClick={addGeneratorPlan}><FilePlus2 size={14} /> Ajouter un plan</button>
+            <input ref={audioInputRef} data-testid="audio-import" type="file" accept="audio/*" hidden onChange={handleAudioImport} />
+            <button className="se-button ghost" data-testid="add-audio" onClick={() => audioInputRef.current?.click()}><Radio size={14} /> Ajouter une musique</button>
+            <div className="se-zoom-control"><ZoomIn size={14} />
             <input
               data-testid="timeline-zoom"
               type="range"
@@ -2250,6 +2438,7 @@ export function ShowEditor({
               onChange={(event) => setZoom(Number(event.target.value))}
             />
             <span>{Math.round(zoom * 100)}%</span>
+            </div>
           </div>
         </div>
 
@@ -2279,26 +2468,28 @@ export function ShowEditor({
               </div>
             </div>
 
-            {show.audio.source !== 'none' && (
-              <div className="se-track-row audio-row">
+            {audioTracks.map(([audioTrackId, clips], audioIndex) => (
+              <div className="se-track-row audio-row" key={audioTrackId}>
                 <div className="se-track-label is-sticky">
                   <span className="se-track-icon audio"><Radio size={14} /></span>
-                  <div><strong>Audio master</strong><small>{show.audio.label}</small></div>
-                  <Lock size={13} />
+                  <div><strong>{audioIndex === 0 ? 'Audio master' : `Musique ${audioIndex + 1}`}</strong><small>{clips.length} clip{clips.length > 1 ? 's' : ''}</small></div>
                 </div>
-                <div className="se-track-lane" style={{ width: `${timelineWidth}px` }}>
-                  <div className="se-audio-clip" style={{ width: `${(show.audio.source === 'file' ? (show.audio.durationFrames ?? show.durationFrames) : show.durationFrames) * zoom}px` }}>
-                    <div className="se-waveform" style={{ opacity: audioLoading ? 0.35 : 0.65, transition: 'opacity 0.2s' }}>
-                      {audioBars.map((height, index) => <i key={index} style={{ height: `${height}%` }} />)}
-                    </div>
-                    <span>{show.audio.label}</span>
-                  </div>
+                <div className="se-track-lane" data-audio-track-id={audioTrackId} style={{ width: `${timelineWidth}px` }} onPointerDown={(event) => {
+                  if ((event.target as HTMLElement).closest('.se-audio-clip')) return;
+                  const bounds = event.currentTarget.getBoundingClientRect();
+                  seekTimelineFrame((event.clientX - bounds.left) / zoom);
+                }}>
+                  {clips.map((audioClip) => <AudioTimelineClip
+                    key={audioClip.id} clip={audioClip} fps={show.fps} zoom={zoom}
+                    onPointerDown={(event, mode) => startAudioDrag(event, audioClip, mode)}
+                    onDelete={() => applyMutation((next) => { next.audioClips = timelineAudioClips.filter((clip) => clip.id !== audioClip.id); })}
+                  />)}
                   <div className="se-playhead" style={{ left: `${playheadLeft}px` }} />
                 </div>
               </div>
-            )}
+            ))}
 
-            {show.audio.source === 'none' && show.tracks.length === 0 && (
+            {timelineAudioClips.length === 0 && show.tracks.length === 0 && (
               <div className="se-empty-timeline-row" data-testid="empty-timeline">
                 <div className="se-track-label is-sticky">
                   <span className="se-track-icon empty"><FilePlus2 size={14} /></span>
@@ -2337,6 +2528,7 @@ export function ShowEditor({
                 </div>
                 <div
                   className={`se-track-lane ${track.muted ? 'is-muted' : ''}`}
+                  data-drop-track-id={track.id}
                   style={{ width: `${timelineWidth}px` }}
                   onPointerDown={(event) => {
                     if ((event.target as HTMLElement).closest('.se-clip')) return;

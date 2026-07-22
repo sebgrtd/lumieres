@@ -1064,6 +1064,18 @@
   color: #747d8e;
 }
 
+.se-timeline-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.se-timeline-actions > .se-button {
+  min-height: 29px;
+  padding: 5px 9px;
+  font-size: .61rem;
+}
+
 .se-zoom-control input {
   width: 120px;
   height: 3px;
@@ -1306,6 +1318,30 @@
   border-radius: 3px;
   background: rgba(40,194,255,.07);
 }
+
+.se-audio-clip.is-editable {
+  cursor: grab;
+  user-select: none;
+}
+
+.se-audio-clip.is-editable:active { cursor: grabbing; }
+
+.se-audio-delete {
+  position: absolute;
+  z-index: 7;
+  top: 3px;
+  right: 5px;
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  padding: 0 !important;
+  border: 0 !important;
+  color: #78aabe;
+  background: rgba(5, 10, 14, .72) !important;
+}
+
+.se-audio-delete:hover { color: #fff; }
 
 .se-audio-clip > span {
   position: absolute;

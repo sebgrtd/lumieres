@@ -51,6 +51,17 @@ export type ShowAudio =
       durationFrames?: number;
     };
 
+export interface ShowAudioClip {
+  id: string;
+  trackId?: string;
+  label: string;
+  path: string;
+  startFrame: number;
+  endFrame: number;
+  sourceOffsetFrames: number;
+  bpm: number;
+}
+
 export interface BaseClip {
   id: string;
   name: string;
@@ -152,6 +163,8 @@ export interface ShowDocument {
   fps: number;
   durationFrames: number;
   audio: ShowAudio;
+  /** Additional editable music clips. Optional for existing v1 show files. */
+  audioClips?: ShowAudioClip[];
   tracks: ShowTrack[];
 }
 
@@ -232,6 +245,18 @@ export function isShowDocument(value: unknown): value is ShowDocument {
     return false;
   }
   if (!Array.isArray(value.tracks)) return false;
+  if (value.audioClips !== undefined) {
+    if (!Array.isArray(value.audioClips)) return false;
+    if (!value.audioClips.every((clip) => isRecord(clip)
+      && typeof clip.id === 'string'
+      && (clip.trackId === undefined || typeof clip.trackId === 'string')
+      && typeof clip.label === 'string'
+      && typeof clip.path === 'string'
+      && Number.isInteger(clip.startFrame) && Number(clip.startFrame) >= 0
+      && Number.isInteger(clip.endFrame) && Number(clip.endFrame) > Number(clip.startFrame)
+      && Number.isInteger(clip.sourceOffsetFrames) && Number(clip.sourceOffsetFrames) >= 0
+      && isFiniteNumber(clip.bpm) && Number(clip.bpm) > 0)) return false;
+  }
 
   const durationFrames = Number(value.durationFrames);
   const trackKinds: TrackKind[] = ['screen', 'fixture', 'projector'];
